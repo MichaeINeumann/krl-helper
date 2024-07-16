@@ -6,6 +6,8 @@ Kuka Code Helper is a Visual Studio Code extension that supports Kuka Robot Lang
 ## Features
 - Highlight KRL functions and methods in the outline view.
 - Support for both local and global functions and methods.
+
+## TODO
 - Syntax highlighting for `.src` files.
 
 ## Installation

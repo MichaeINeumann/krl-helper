@@ -2,14 +2,14 @@
   "name": "krl-helper",
   "displayName": "krl-helper",
   "description": "A VS Code extension to support Kuka Robot Language (KRL), showing functions in the outline.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "Michael Neumann",
   "engines": {
     "vscode": "^1.91.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/IhrBenutzername/KRL-HELPER"  // Replace with your actual repository URL
+    "url": "https://github.com/MichaeINeumann/krl-helper.git"
   },
   "categories": [
     "Other"
