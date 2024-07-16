@@ -11,9 +11,9 @@ class FunctionSymbolProvider implements vscode.DocumentSymbolProvider {
     // Regular expressions for matching KRL functions and methods
     const functionRegexes = [
       { regex: /GLOBAL\s+DEF\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: true },   // Global method
+      { regex: /GLOBAL\s+DEFFCT\s+\w+\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: true }, // Global function
       { regex: /DEF\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Method, isGlobal: false },             // Method
-      { regex: /GLOBAL\s+DEFFCT\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: true }, // Global function
-      { regex: /DEFFCT\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: false }         // Function
+      { regex: /DEFFCT\s+\w+\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: false }         // Function        
     ];
     
     const text = document.getText();
