@@ -515,7 +515,7 @@ function findUndeclaredDiagnostics(
     const identifier = match[0];
     const normalized = identifier.toLowerCase();
     const scope = classifyVariable(identifier, configuration);
-    if (isSystemVariable(text, match.index) || isMemberAccess(text, match.index)
+    if (hasNonVariablePrefix(text, match.index) || isMemberAccess(text, match.index)
         || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
       continue;
     }
@@ -538,8 +538,8 @@ function isSupportedSource(filePath: string): boolean {
   return extension === '.src' || extension === '.sub';
 }
 
-function isSystemVariable(text: string, offset: number): boolean {
-  return offset > 0 && text[offset - 1] === '$';
+function hasNonVariablePrefix(text: string, offset: number): boolean {
+  return offset > 0 && (text[offset - 1] === '$' || text[offset - 1] === '#');
 }
 
 function isMemberAccess(text: string, offset: number): boolean {
