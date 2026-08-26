@@ -48,6 +48,7 @@ suite('KRL Helper', () => {
       '    BRAKE',
       '  ENDIF',
       '  bMissing = #NOTIFY',
+      '  $IN[nIoIndex] = TRUE',
       'END',
       ''
     ].join('\n'), 'utf8');
@@ -61,6 +62,7 @@ suite('KRL Helper', () => {
       const diagnostics = await waitForDiagnostics(uri);
 
       assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("Variable 'bMissing' is not declared")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("Variable 'nIoIndex' is not declared")));
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'BRAKE'") || diagnostic.message.includes("'B_AND'")));
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'NOTIFY'")));
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
@@ -246,11 +248,13 @@ suite('KRL Helper', () => {
     const sourceUri = vscode.Uri.joinPath(programUri, 'standalone-main.src');
     const libraryUri = vscode.Uri.joinPath(programUri, 'standalone-library.src');
     const moduleUri = vscode.Uri.joinPath(programUri, 'standalonemodule.src');
+    const freshLibraryUri = vscode.Uri.joinPath(programUri, 'fresh-library.src');
     await vscode.workspace.fs.createDirectory(programUri);
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
       'DEF StandaloneMain()',
       '  StandaloneGlobal()',
       '  StandaloneModule()',
+      '  FreshGlobal()',
       'END',
       ''
     ].join('\n')));
@@ -270,6 +274,18 @@ suite('KRL Helper', () => {
         );
         assert.ok(definitions.some(definition => definition.uri.toString() === targetUri.toString()));
       }
+
+      const freshPosition = document.positionAt(document.getText().indexOf('FreshGlobal'));
+      const missingDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider', sourceUri, freshPosition
+      );
+      assert.ok(!missingDefinitions || missingDefinitions.length === 0);
+
+      await vscode.workspace.fs.writeFile(freshLibraryUri, Buffer.from('GLOBAL DEF FreshGlobal()\nEND\n'));
+      const freshDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', sourceUri, freshPosition
+      );
+      assert.ok(freshDefinitions.some(definition => definition.uri.toString() === freshLibraryUri.toString()));
     } finally {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
@@ -317,7 +333,6 @@ suite('KRL Helper', () => {
   });
 
   test('limits local variable definitions to the containing routine', async () => {
-    const sourceUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-routine-scope-${Date.now()}.src`));
     const source = [
       'DEF First()',
       '  DECL BOOL bShared',
@@ -330,14 +345,13 @@ suite('KRL Helper', () => {
       'END',
       ''
     ].join('\n');
-    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(source));
 
     try {
-      const document = await vscode.workspace.openTextDocument(sourceUri);
+      const document = await vscode.workspace.openTextDocument({ language: 'krl', content: source });
       await vscode.window.showTextDocument(document);
       const sharedDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
         'vscode.executeDefinitionProvider',
-        sourceUri,
+        document.uri,
         document.positionAt(lastIdentifierOffset(source, 'bShared'))
       );
       assert.strictEqual(sharedDefinitions.length, 1);
@@ -345,13 +359,12 @@ suite('KRL Helper', () => {
 
       const outOfScopeDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
         'vscode.executeDefinitionProvider',
-        sourceUri,
+        document.uri,
         document.positionAt(lastIdentifierOffset(source, 'bFirstOnly'))
       );
       assert.ok(!outOfScopeDefinitions || outOfScopeDefinitions.length === 0);
     } finally {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-      await vscode.workspace.fs.delete(sourceUri, { useTrash: false });
     }
   });
 
@@ -423,11 +436,13 @@ suite('KRL Helper', () => {
     const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-krc-project-${Date.now()}`));
     const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'external.src');
     const globalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'legacy-global.dat');
+    const freshGlobalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'fresh-global.dat');
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program'));
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
       'DEF External()',
       '  advanceStop(bAdvanceStop)',
+      '  bFreshGlobal = TRUE',
       'END',
       ''
     ].join('\n')));
@@ -452,6 +467,20 @@ suite('KRL Helper', () => {
       );
       assert.ok(definitions.some(definition =>
         definition.uri.toString() === globalUri.toString() && definition.range.start.line === 1
+      ));
+
+      await vscode.workspace.fs.writeFile(freshGlobalUri, Buffer.from([
+        'DEFDAT FreshGlobal PUBLIC',
+        'DECL GLOBAL BOOL bFreshGlobal',
+        'ENDDAT',
+        ''
+      ].join('\n')));
+      const freshPosition = document.positionAt(lastIdentifierOffset(document.getText(), 'bFreshGlobal'));
+      const freshDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', sourceUri, freshPosition
+      );
+      assert.ok(freshDefinitions.some(definition =>
+        definition.uri.toString() === freshGlobalUri.toString() && definition.range.start.line === 1
       ));
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     } finally {

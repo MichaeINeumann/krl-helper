@@ -140,8 +140,7 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
       if (definition.sourceId !== currentSourceId) {
         return false;
       }
-      return !currentRoutine || definition.fileKind !== 'source'
-        || definition.routineStartOffset === currentRoutine.startOffset;
+      return !currentRoutine || definition.routineStartOffset === currentRoutine.startOffset;
     });
     const globalDefinitions = selectGlobalDefinitions(document.uri, allDefinitions, indexedDefinitions);
     const navigationGlobalDefinitions = selectNavigationGlobalDefinitions(
@@ -158,6 +157,9 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
   }
 
   private projectVariables(root: string): Promise<IndexedKrlVariable[]> {
+    if (!vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root))) {
+      return this.buildProjectVariables(root);
+    }
     const key = normalizePath(root);
     const cached = this.projectCache.get(key);
     if (cached?.revision === this.revision) {
@@ -204,7 +206,7 @@ function indexDocument(document: vscode.TextDocument): IndexedKrlVariable[] {
 
 function indexText(text: string, uri: vscode.Uri): IndexedKrlVariable[] {
   const metadata = fileMetadata(uri, text);
-  const routines = metadata.fileKind === 'source' ? findKrlRoutines(text) : [];
+  const routines = findKrlRoutines(text);
   return parseKrlVariableDeclarations(text).map(declaration => ({
     ...declaration,
     ...metadata,

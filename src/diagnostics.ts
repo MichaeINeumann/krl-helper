@@ -531,7 +531,13 @@ function findUndeclaredDiagnostics(
     const normalized = identifier.toLowerCase();
     const scope = classifyVariable(identifier, configuration);
     if (hasNonVariablePrefix(text, match.index) || isMemberAccess(text, match.index)
-        || isIoAliasOperand(text, match.index, match.index + identifier.length)
+        || isConfiguredIoAliasOperand(
+          text,
+          match.index,
+          match.index + identifier.length,
+          identifier,
+          configuration
+        )
         || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
       continue;
     }
@@ -576,7 +582,13 @@ function isFunctionIdentifier(text: string, endOffset: number): boolean {
   return text[offset] === '(';
 }
 
-function isIoAliasOperand(text: string, startOffset: number, endOffset: number): boolean {
+function isConfiguredIoAliasOperand(
+  text: string,
+  startOffset: number,
+  endOffset: number,
+  identifier: string,
+  configuration: DiagnosticPrefixConfiguration
+): boolean {
   let offset = endOffset;
   while (offset < text.length && (text[offset] === ' ' || text[offset] === '\t')) {
     offset += 1;
@@ -602,7 +614,13 @@ function isIoAliasOperand(text: string, startOffset: number, endOffset: number):
     offset -= 1;
   }
   const systemName = text.slice(offset + 1, systemNameEnd).toLowerCase();
-  return text[offset] === '$' && (systemName === 'in' || systemName === 'out');
+  if (text[offset] !== '$') {
+    return false;
+  }
+  const aliasPrefixes = systemName === 'in'
+    ? configuration.inputAliasPrefixes
+    : systemName === 'out' ? configuration.outputAliasPrefixes : [];
+  return matchesAnyPrefix(identifier, aliasPrefixes);
 }
 
 function findCompanionDat(sourcePath: string): string | null {
