@@ -152,6 +152,9 @@ export class KrlFunctionNavigationProvider implements vscode.HoverProvider, vsco
   }
 
   private projectFunctions(root: string): Promise<IndexedKrlFunction[]> {
+    if (!vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root))) {
+      return this.buildProjectFunctions(root);
+    }
     const key = normalizePath(root);
     const cached = this.projectCache.get(key);
     if (cached?.revision === this.revision) {
