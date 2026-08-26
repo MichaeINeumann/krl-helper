@@ -240,6 +240,42 @@ suite('KRL Helper', () => {
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   });
 
+  test('infers a standalone KRC project for function navigation', async () => {
+    const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-functions-${Date.now()}`));
+    const programUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program');
+    const sourceUri = vscode.Uri.joinPath(programUri, 'standalone-main.src');
+    const libraryUri = vscode.Uri.joinPath(programUri, 'standalone-library.src');
+    const moduleUri = vscode.Uri.joinPath(programUri, 'standalonemodule.src');
+    await vscode.workspace.fs.createDirectory(programUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF StandaloneMain()',
+      '  StandaloneGlobal()',
+      '  StandaloneModule()',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(libraryUri, Buffer.from('GLOBAL DEF StandaloneGlobal()\nEND\n'));
+    await vscode.workspace.fs.writeFile(moduleUri, Buffer.from('DEF StandaloneModule()\nEND\n'));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      for (const [name, targetUri] of [
+        ['StandaloneGlobal', libraryUri],
+        ['StandaloneModule', moduleUri]
+      ] as const) {
+        const position = document.positionAt(document.getText().indexOf(name, name.length));
+        const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+          'vscode.executeDefinitionProvider', sourceUri, position
+        );
+        assert.ok(definitions.some(definition => definition.uri.toString() === targetUri.toString()));
+      }
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('resolves visible local, companion DAT, parameter, and project variables', async () => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(workspaceFolder);
@@ -280,6 +316,109 @@ suite('KRL Helper', () => {
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   });
 
+  test('limits local variable definitions to the containing routine', async () => {
+    const sourceUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-routine-scope-${Date.now()}.src`));
+    const source = [
+      'DEF First()',
+      '  DECL BOOL bShared',
+      '  DECL BOOL bFirstOnly',
+      '  bShared = TRUE',
+      'END',
+      'DEF Second(BOOL bShared)',
+      '  bShared = FALSE',
+      '  bFirstOnly = FALSE',
+      'END',
+      ''
+    ].join('\n');
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(source));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const sharedDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(source, 'bShared'))
+      );
+      assert.strictEqual(sharedDefinitions.length, 1);
+      assert.strictEqual(sharedDefinitions[0].range.start.line, 5);
+
+      const outOfScopeDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(source, 'bFirstOnly'))
+      );
+      assert.ok(!outOfScopeDefinitions || outOfScopeDefinitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(sourceUri, { useTrash: false });
+    }
+  });
+
+  test('keeps variable navigation inside the enclosing KRC project', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const containerUri = vscode.Uri.joinPath(workspaceFolder.uri, `navigation-isolation-${Date.now()}`);
+    const firstProgramUri = vscode.Uri.joinPath(containerUri, 'controller-a', 'KRC', 'R1', 'Program');
+    const secondProgramUri = vscode.Uri.joinPath(containerUri, 'controller-b', 'KRC', 'R1', 'Program');
+    const sourceUri = vscode.Uri.joinPath(firstProgramUri, 'main.src');
+    const firstDatUri = vscode.Uri.joinPath(firstProgramUri, 'shared.dat');
+    const secondDatUri = vscode.Uri.joinPath(secondProgramUri, 'shared.dat');
+    const publicDat = Buffer.from('DEFDAT Shared PUBLIC\nDECL GLOBAL BOOL b_Isolated\nENDDAT\n');
+    await vscode.workspace.fs.createDirectory(firstProgramUri);
+    await vscode.workspace.fs.createDirectory(secondProgramUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from('DEF Main()\n  b_Isolated = TRUE\nEND\n'));
+    await vscode.workspace.fs.writeFile(firstDatUri, publicDat);
+    await vscode.workspace.fs.writeFile(secondDatUri, publicDat);
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'b_Isolated'))
+      );
+      assert.strictEqual(definitions.length, 1);
+      assert.strictEqual(definitions[0].uri.toString(), firstDatUri.toString());
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(containerUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('uses unsaved companion DAT declarations for standalone navigation', async () => {
+    const directoryUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-companion-${Date.now()}`));
+    const sourceUri = vscode.Uri.joinPath(directoryUri, 'standalone.src');
+    const datUri = vscode.Uri.joinPath(directoryUri, 'standalone.dat');
+    await vscode.workspace.fs.createDirectory(directoryUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from('DEF Standalone()\n  bUnsaved = TRUE\nEND\n'));
+    await vscode.workspace.fs.writeFile(datUri, Buffer.from('DEFDAT Standalone\nENDDAT\n'));
+
+    try {
+      const datDocument = await vscode.workspace.openTextDocument(datUri);
+      const datEditor = await vscode.window.showTextDocument(datDocument);
+      assert.ok(await datEditor.edit(edit => edit.insert(new vscode.Position(1, 0), 'DECL BOOL bUnsaved\n')));
+      assert.strictEqual(datDocument.isDirty, true);
+
+      const sourceDocument = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(sourceDocument);
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        sourceDocument.positionAt(lastIdentifierOffset(sourceDocument.getText(), 'bUnsaved'))
+      );
+      assert.strictEqual(definitions.length, 1);
+      assert.strictEqual(definitions[0].uri.toString(), datUri.toString());
+      assert.strictEqual(definitions[0].range.start.line, 1);
+
+      assert.ok(await datDocument.save());
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(directoryUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('navigates to a legacy public DAT global without accepting it as locally visible', async () => {
     const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-krc-project-${Date.now()}`));
     const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'external.src');
@@ -317,6 +456,47 @@ suite('KRL Helper', () => {
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     } finally {
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('excludes KRL keywords and I/O aliases from generic prefix diagnostics', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics');
+    const sourceUri = vscode.Uri.joinPath(
+      workspaceFolder.uri, 'KRC', 'R1', 'Program', `keyword-diagnostics-${Date.now()}.src`
+    );
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF KeywordDiagnostics(IN INT iCount, INOUT REAL rValue)',
+      '  $IN[i_Configured] = TRUE',
+      '  $IN[i_Missing] = TRUE',
+      '  rValue = rValue + iCount',
+      '  RETURN',
+      'END',
+      ''
+    ].join('\n')));
+
+    try {
+      await configuration.update('localVariablePrefixes', ['i', 'r'], vscode.ConfigurationTarget.Global);
+      await configuration.update('globalVariablePrefixes', [], vscode.ConfigurationTarget.Global);
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'i_Missing'"))
+      );
+      const messages = diagnostics.map(diagnostic => diagnostic.message);
+
+      for (const ignoredName of ['IN', 'INT', 'INOUT', 'REAL', 'RETURN', 'i_Configured']) {
+        assert.ok(!messages.some(message => message.includes(`'${ignoredName}'`)), `${ignoredName} should be ignored`);
+      }
+      const missingAliasMessages = messages.filter(message => message.includes("'i_Missing'"));
+      assert.strictEqual(missingAliasMessages.length, 1);
+      assert.ok(missingAliasMessages[0].includes('$config.dat'));
+    } finally {
+      await configuration.update('localVariablePrefixes', undefined, vscode.ConfigurationTarget.Global);
+      await configuration.update('globalVariablePrefixes', undefined, vscode.ConfigurationTarget.Global);
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(sourceUri, { useTrash: false });
     }
   });
 
