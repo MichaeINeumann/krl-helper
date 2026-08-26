@@ -31,6 +31,7 @@ suite('KRL variable parser', () => {
     const source = [
       'bLocal = structValue.member',
       '$IN[i_Input] = TRUE',
+      'bState = #NOTIFY',
       'Run()',
       '; bCommented'
     ].join('\n');
@@ -40,6 +41,7 @@ suite('KRL variable parser', () => {
     assert.strictEqual(findKrlVariableReference(source, source.indexOf('member')), undefined);
     assert.strictEqual(findKrlVariableReference(source, source.indexOf('$IN') + 1), undefined);
     assert.strictEqual(findKrlVariableReference(source, source.indexOf('i_Input'))?.normalizedName, 'i_input');
+    assert.strictEqual(findKrlVariableReference(source, source.indexOf('NOTIFY')), undefined);
     assert.strictEqual(findKrlVariableReference(source, source.indexOf('Run')), undefined);
     assert.strictEqual(findKrlVariableReference(source, source.indexOf('bCommented')), undefined);
   });
