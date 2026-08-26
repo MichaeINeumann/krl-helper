@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { sanitizeForAnalysis } from './diagnosticSanitizer';
 import {
   classifyVariable,
   DiagnosticPrefixConfiguration,
@@ -360,13 +361,14 @@ function findContainingRoutine(text: string, offset: number): KrlRoutineRange | 
 }
 
 function findKrlRoutines(text: string): KrlRoutineRange[] {
+  const sanitized = sanitizeForAnalysis(text);
   const definitions = parseKrlFunctions(text);
   return definitions.map((definition, index) => {
     const nextDefinitionOffset = definitions[index + 1]?.startOffset ?? text.length;
     const terminator = definition.kind === 'DEFFCT'
       ? /^[\t ]*ENDFCT\b[^\r\n]*/im
       : /^[\t ]*END\b[^\r\n]*/im;
-    const searchText = text.slice(definition.endOffset, nextDefinitionOffset);
+    const searchText = sanitized.slice(definition.endOffset, nextDefinitionOffset);
     const match = terminator.exec(searchText);
     return {
       startOffset: definition.startOffset,
