@@ -1,66 +1,114 @@
-# Kuka Code Helper
+# KRL Helper
 
-## Description
-Kuka Code Helper is a Visual Studio Code extension that supports Kuka Robot Language (KRL). It helps in showing functions and methods in the outline.
+KRL Helper is a Visual Studio Code extension providing language support and productivity features for KUKA Robot Language (KRL).
 
 ## Features
-- Highlight KRL functions and methods in the outline view.
-- Support for both local and global functions and methods.
-- Generate iiQKA motion folds (PTP/LIN/SPTP/SLIN) around selected KRL motion blocks.
-- Syntax highlighting for KRL `.src`, `.dat` and `.sub` files.
-- Native VS Code line-comment toggling for KRL using `;` (e.g. `Strg+#` with the standard German keybinding).
-- Explicit KRL comment shortcuts for `Strg+/` and `Strg+#`, including the physical German `#` key.
-- Adjustable KRL syntax colors in a dedicated editor with color pickers.
-- Separate high-contrast palettes for light and dark VS Code themes, switched automatically with the active theme.
-- Readable light-theme defaults use black text, dark red strings and dark blue variable names.
-- Applies the active light or dark KRL default palette automatically after installation/startup unless custom colors already exist.
-- Separate colors for general control structures, complete `IF` and `SWITCH` blocks, `DO`, `WAIT` and user variable names.
-- KRL colors are applied with theme-specific, fully qualified scope rules and also work when a workspace contains its own token-color customizations.
-- Stale KRL color rules are removed by managed scope, including unnamed rules and KRL selectors inside otherwise unrelated mixed rules.
-- General undeclared-variable diagnostics remain active for KRL code but ignore semicolon comments, block comments and KUKA header directives such as `&COMMENT`, `&PARAM`, `&ACCESS` and `&REL`. Declarations are indexed project-wide: all declarations in project `.dat` files plus `GLOBAL` declarations in foreign `.src`/`.sub` files are recognized. Targeted validation of `$IN[...]` and `$OUT[...]` aliases against `$config.dat` also remains active.
+
+- Syntax highlighting for `.src`, `.dat`, and `.sub` files.
+- Separate, configurable syntax-color palettes for dark and light themes.
+- Document Outline entries for local and global `DEF` and `DEFFCT` declarations.
+- Conversion of selected `PTP`, `LIN`, `SPTP`, and `SLIN` motion blocks into iiQKA-style folds.
+- Line comments using `;`, including the standard VS Code **Toggle Line Comment** command and dedicated KRL Helper shortcuts.
+- Heuristic diagnostics for undeclared variables in `.src` and `.sub` files.
+- Project-wide declaration indexing across KRL source and data files.
+- Awareness of local declarations, companion DAT declarations, project DAT declarations, and `GLOBAL` declarations in other source files.
+- Targeted diagnostics for `$IN[...]` and `$OUT[...]` aliases that follow the `i_` and `o_` naming conventions but are missing from `$config.dat`.
 
 ## Installation
-1. Download the `.vsix` file from the releases.
-2. Open Visual Studio Code.
-3. Go to Extensions view by clicking on the Extensions icon in the Sidebar.
-4. Click on the three dots at the top-right corner of the Extensions view.
-5. Choose `Install from VSIX...`.
-6. Select the downloaded `.vsix` file.
 
-## Usage
-- Open a KRL file with a `.src` extension.
-- Functions and methods will be displayed in the outline view.
-- Use `KRL-HELPER: Syntaxfarben einstellen` from the command palette to open the dedicated color editor.
-- Select the KRL motion block (without any `;FOLD` / `;ENDFOLD`) and run:
-  - Command: `KRL-HELPER: Convert Selection to iiQKA Fold` (`kukaFoldTools.convertSelection`)
-  - The selection is wrapped by the new iiQKA fold.
-  - Tool/Base indices are detected in the selection (e.g. `$TOOL = TOOL_DATA[n]`, `$BASE = BASE_DATA[n]`, `BAS(#TOOL, n)`, `BAS(#BASE, n)`), otherwise looked up via `FDAT_ACT` in the companion `.dat` file (same basename).
-- Tool/Base names are looked up from `$config.dat` in the workspace (prefers `KRC/R1/System/$config.dat` closest to the active file, otherwise falls back to any `$config.dat`). If empty, the names are omitted in the fold header.
+### Visual Studio Marketplace
 
-### Example keybinding
-Add this to your VS Code `keybindings.json`:
-```json
-{
-  "key": "ctrl+alt+k",
-  "command": "kukaFoldTools.convertSelection",
-  "when": "editorTextFocus && editorLangId == 'krl'"
-}
-```
+After the extension is published, open the Extensions view in Visual Studio Code, search for **KRL Helper**, and select **Install**.
 
-## Contributing
-If you want to contribute to the development of this extension, feel free to open issues or submit pull requests on GitHub.
+### Local VSIX
 
-## Build from source
+For development or testing, build a VSIX and install it from the command line:
 
 ```bash
-npm install
-npm run compile
+npm ci
+npm run package
 npx @vscode/vsce package
+code --install-extension krl-helper-0.1.0.vsix
 ```
 
-The build produces `dist/extension.js`. The VSIX packaging
-command creates the installable extension package from the current version in
-`package.json`.
+You can also use **Extensions: Install from VSIX...** from the Command Palette.
+
+## Usage
+
+Open a `.src`, `.dat`, or `.sub` file. Visual Studio Code automatically selects the KRL language mode.
+
+The Outline view lists supported routine declarations. For example:
+
+```krl
+DEF TestProgram()
+  DECL BOOL bPartDetected
+  DECL INT nCounter
+
+  bPartDetected = FALSE
+  nCounter = 0
+END
+```
+
+Useful commands are available from the Command Palette:
+
+- **KRL Helper: Configure Syntax Colors** opens the dark/light palette editor.
+- **KRL Helper: Toggle Line Comment** toggles `;` comments on the selected lines.
+- **KRL Helper: Convert Selection to iiQKA Fold** wraps a selected supported motion block in fold metadata.
+
+For fold conversion, select only the motion block without existing `;FOLD` or `;ENDFOLD` lines. Tool and base indices are read from the selection where possible, then from the companion DAT file or `Global_Points.dat`. Display names are read from the nearest workspace `$config.dat`.
+
+## Configuration
+
+`krlHighlighting.applyCustomColors` enables or disables extension-managed KRL TextMate colors. It defaults to `true` and preserves unrelated TextMate rules.
+
+The following settings accept CSS-style hexadecimal colors such as `#C0C0C0` or `#001080`:
+
+| Setting | Token category |
+| --- | --- |
+| `krlHighlighting.colors.normalText` | Regular KRL text |
+| `krlHighlighting.colors.comments` | Semicolon comments |
+| `krlHighlighting.colors.blockComments` | Supported alternative block comments |
+| `krlHighlighting.colors.strings` | String literals |
+| `krlHighlighting.colors.numbers` | Numeric literals |
+| `krlHighlighting.colors.programFlow` | Program-flow and declaration keywords |
+| `krlHighlighting.colors.controlStructures` | General control structures |
+| `krlHighlighting.colors.ifKeyword` | `IF` blocks |
+| `krlHighlighting.colors.switchKeyword` | `SWITCH` blocks |
+| `krlHighlighting.colors.doKeyword` | `DO` |
+| `krlHighlighting.colors.waitKeyword` | `WAIT` |
+| `krlHighlighting.colors.variableNames` | User variable names |
+| `krlHighlighting.colors.setupCommands` | Setup commands |
+| `krlHighlighting.colors.motionCommands` | Motion commands |
+| `krlHighlighting.colors.mathFunctions` | Mathematical operators and functions |
+| `krlHighlighting.colors.ioCommands` | I/O, trigger, and interrupt commands |
+| `krlHighlighting.colors.typeDefinitions` | KRL data types |
+| `krlHighlighting.colors.systemVariables` | `$`-prefixed system variables |
+| `krlHighlighting.colors.listFunctions` | Boolean and enum values plus string/list functions |
+
+The color editor stores separate light and dark palettes and switches them with the active VS Code theme.
+
+## Limitations
+
+KRL Helper does not implement the complete KRL grammar and is not a replacement for the controller compiler, simulation, validation, or safety review.
+
+Syntax recognition, symbol extraction, fold conversion, and diagnostics use heuristic, incrementally developed analysis. Valid code can therefore produce false positives or incomplete results, and invalid code may not be detected. Always validate robot programs with the appropriate engineering and controller tools before use.
+
+## Disclaimer
+
+KRL Helper is an independent, unofficial community project.
+
+It is not affiliated with, endorsed by, sponsored by, or maintained by KUKA AG.
+
+KUKA and KUKA Robot Language (KRL) are trademarks or product names of their respective owners.
+
+## Contributing
+
+Issues and pull requests are welcome. Please use synthetic examples and do not submit customer, company, machine, production, or other confidential data.
 
 ## License
-[MIT](https://github.com/MichaeINeumann/krl-helper/blob/HEAD/LICENSE)
+
+KRL Helper is available under the [MIT License](LICENSE).
+
+## Repository
+
+Source code and issue tracking are available at [github.com/MichaeINeumann/krl-helper](https://github.com/MichaeINeumann/krl-helper).

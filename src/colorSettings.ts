@@ -29,25 +29,25 @@ export interface TokenColorCustomizations {
 }
 
 const colorDefinitions: readonly ColorDefinition[] = [
-  { label: 'Normaler Text', key: 'normalText', scope: 'source.krl', darkFallback: '#C0C0C0', lightFallback: '#000000' },
-  { label: 'Kommentare', key: 'comments', scope: 'comment.line.semicolon.krl', darkFallback: '#00FF00', lightFallback: '#59636D' },
-  { label: 'Alternative Blockkommentare', key: 'blockComments', scope: 'comment.block.alternative.krl', darkFallback: '#75715E', lightFallback: '#59636D' },
-  { label: 'Zeichenketten', key: 'strings', scope: ['string.quoted.double.krl', 'string.quoted.single.krl'], darkFallback: '#FFFFFF', lightFallback: '#A31515' },
-  { label: 'Zahlen', key: 'numbers', scope: 'constant.numeric.krl', darkFallback: '#AE81FF', lightFallback: '#003C3C' },
-  { label: 'Programmfluss und Deklarationen', key: 'programFlow', scope: 'keyword.control.flow.krl', darkFallback: '#F92672', lightFallback: '#0E6683' },
-  { label: 'Kontrollstrukturen', key: 'controlStructures', scope: 'keyword.control.structure.krl', darkFallback: '#F92672', lightFallback: '#7A1F5C' },
+  { label: 'Regular text', key: 'normalText', scope: 'source.krl', darkFallback: '#C0C0C0', lightFallback: '#000000' },
+  { label: 'Comments', key: 'comments', scope: 'comment.line.semicolon.krl', darkFallback: '#00FF00', lightFallback: '#59636D' },
+  { label: 'Alternative block comments', key: 'blockComments', scope: 'comment.block.alternative.krl', darkFallback: '#75715E', lightFallback: '#59636D' },
+  { label: 'Strings', key: 'strings', scope: ['string.quoted.double.krl', 'string.quoted.single.krl'], darkFallback: '#FFFFFF', lightFallback: '#A31515' },
+  { label: 'Numbers', key: 'numbers', scope: 'constant.numeric.krl', darkFallback: '#AE81FF', lightFallback: '#003C3C' },
+  { label: 'Program flow and declarations', key: 'programFlow', scope: 'keyword.control.flow.krl', darkFallback: '#F92672', lightFallback: '#0E6683' },
+  { label: 'Control structures', key: 'controlStructures', scope: 'keyword.control.structure.krl', darkFallback: '#F92672', lightFallback: '#7A1F5C' },
   { label: 'IF / THEN / ELSE / ENDIF', key: 'ifKeyword', scope: 'keyword.control.if.krl', darkFallback: '#66D9EF', lightFallback: '#005A9C' },
   { label: 'SWITCH / CASE / DEFAULT / ENDSWITCH', key: 'switchKeyword', scope: 'keyword.control.switch.krl', darkFallback: '#AE81FF', lightFallback: '#6A2C91' },
-  { label: 'Schlüsselwort DO', key: 'doKeyword', scope: 'keyword.control.do.krl', darkFallback: '#FF8000', lightFallback: '#8A3B00' },
-  { label: 'Schlüsselwort WAIT', key: 'waitKeyword', scope: 'keyword.control.wait.krl', darkFallback: '#E8ED12', lightFallback: '#6E5700' },
-  { label: 'Variablennamen', key: 'variableNames', scope: 'variable.other.user.krl', darkFallback: '#C0C0C0', lightFallback: '#001080' },
-  { label: 'Setup-Befehle', key: 'setupCommands', scope: ['support.function.setup.krl', 'keyword.other.setup.krl', 'keyword.other.preprocessor.krl'], darkFallback: '#FFC042', lightFallback: '#830104' },
-  { label: 'Bewegungsbefehle', key: 'motionCommands', scope: ['keyword.control.motion.krl', 'constant.other.motion-blending.krl'], darkFallback: '#FF8000', lightFallback: '#B43A00' },
-  { label: 'Mathematik und Funktionen', key: 'mathFunctions', scope: ['keyword.operator.logical.krl', 'support.function.math.krl'], darkFallback: '#FFC042', lightFallback: '#5757C8' },
-  { label: 'E/A-Befehle', key: 'ioCommands', scope: ['keyword.control.io.krl', 'support.function.io.krl'], darkFallback: '#FFC042', lightFallback: '#006B9F' },
-  { label: 'Typdefinitionen', key: 'typeDefinitions', scope: 'storage.type.krl', darkFallback: '#FFC042', lightFallback: '#0E6683' },
-  { label: 'Systemvariablen', key: 'systemVariables', scope: 'variable.other.system.krl', darkFallback: '#E8ED12', lightFallback: '#0000FF' },
-  { label: 'Listenfunktionen', key: 'listFunctions', scope: ['constant.language.boolean.krl', 'constant.other.enum.krl', 'support.function.list.krl'], darkFallback: '#FFC042', lightFallback: '#0E6683' }
+  { label: 'DO keyword', key: 'doKeyword', scope: 'keyword.control.do.krl', darkFallback: '#FF8000', lightFallback: '#8A3B00' },
+  { label: 'WAIT keyword', key: 'waitKeyword', scope: 'keyword.control.wait.krl', darkFallback: '#E8ED12', lightFallback: '#6E5700' },
+  { label: 'Variable names', key: 'variableNames', scope: 'variable.other.user.krl', darkFallback: '#C0C0C0', lightFallback: '#001080' },
+  { label: 'Setup commands', key: 'setupCommands', scope: ['support.function.setup.krl', 'keyword.other.setup.krl', 'keyword.other.preprocessor.krl'], darkFallback: '#FFC042', lightFallback: '#830104' },
+  { label: 'Motion commands', key: 'motionCommands', scope: ['keyword.control.motion.krl', 'constant.other.motion-blending.krl'], darkFallback: '#FF8000', lightFallback: '#B43A00' },
+  { label: 'Math and functions', key: 'mathFunctions', scope: ['keyword.operator.logical.krl', 'support.function.math.krl'], darkFallback: '#FFC042', lightFallback: '#5757C8' },
+  { label: 'I/O commands', key: 'ioCommands', scope: ['keyword.control.io.krl', 'support.function.io.krl'], darkFallback: '#FFC042', lightFallback: '#006B9F' },
+  { label: 'Type definitions', key: 'typeDefinitions', scope: 'storage.type.krl', darkFallback: '#FFC042', lightFallback: '#0E6683' },
+  { label: 'System variables', key: 'systemVariables', scope: 'variable.other.system.krl', darkFallback: '#E8ED12', lightFallback: '#0000FF' },
+  { label: 'List functions', key: 'listFunctions', scope: ['constant.language.boolean.krl', 'constant.other.enum.krl', 'support.function.list.krl'], darkFallback: '#FFC042', lightFallback: '#0E6683' }
 ];
 
 let extensionContext: vscode.ExtensionContext | undefined;
@@ -251,7 +251,7 @@ function activeThemeSelector(): string {
 function queueColorUpdate(task: () => Promise<void>): Promise<void> {
   const nextUpdate = colorUpdateQueue.then(task, task);
   colorUpdateQueue = nextUpdate.catch(error => {
-    console.error('KRL Helper: Syntaxfarben konnten nicht aktualisiert werden.', error);
+    console.error('KRL Helper: Syntax colors could not be updated.', error);
   });
   return nextUpdate;
 }
@@ -320,21 +320,21 @@ export function colorSettingsHtml(webview: vscode.Webview, initialPalette = acti
   };
   const palettes = paletteSection(
     'dark',
-    'Dunkles Theme',
-    'Farben nach den KUKA-Screenshots für dunkle Hintergründe.'
+    'Dark theme',
+    'High-contrast defaults for dark editor backgrounds.'
   ) + paletteSection(
     'light',
-    'Helles Theme',
-    'Am hellen KUKA-Beispiel orientierte und für weiße Hintergründe kontrastoptimierte Farben.'
+    'Light theme',
+    'Contrast-optimized defaults for light editor backgrounds.'
   );
 
   return `<!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${scriptNonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KRL Syntaxfarben</title>
+  <title>KRL Syntax Colors</title>
   <style>
     body { color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); max-width: 760px; margin: 0 auto; padding: 24px; }
     h1 { font-size: 22px; margin: 0 0 8px; }
@@ -361,14 +361,14 @@ export function colorSettingsHtml(webview: vscode.Webview, initialPalette = acti
   </style>
 </head>
 <body>
-  <h1>KRL Syntaxfarben</h1>
-  <p>Diese Farben gelten ausschließlich für KRL-Dateien mit den Endungen .src, .dat und .sub. Beim Themewechsel wird automatisch die passende Palette verwendet.</p>
-  <div class="tabs" role="tablist" aria-label="Farbschema">
-    <button type="button" id="dark-tab" class="tab" role="tab" aria-controls="dark-panel" aria-selected="${initialPalette === 'dark'}" tabindex="${initialPalette === 'dark' ? '0' : '-1'}" data-palette="dark">Dunkel</button>
-    <button type="button" id="light-tab" class="tab" role="tab" aria-controls="light-panel" aria-selected="${initialPalette === 'light'}" tabindex="${initialPalette === 'light' ? '0' : '-1'}" data-palette="light">Hell</button>
+  <h1>KRL Syntax Colors</h1>
+  <p>These colors apply only to KRL files with .src, .dat, and .sub extensions. The matching palette is selected automatically when the theme changes.</p>
+  <div class="tabs" role="tablist" aria-label="Color palette">
+    <button type="button" id="dark-tab" class="tab" role="tab" aria-controls="dark-panel" aria-selected="${initialPalette === 'dark'}" tabindex="${initialPalette === 'dark' ? '0' : '-1'}" data-palette="dark">Dark</button>
+    <button type="button" id="light-tab" class="tab" role="tab" aria-controls="light-panel" aria-selected="${initialPalette === 'light'}" tabindex="${initialPalette === 'light' ? '0' : '-1'}" data-palette="light">Light</button>
   </div>
   ${palettes}
-  <div class="actions"><button type="button" id="reset" class="secondary">Standardfarben wiederherstellen</button><button type="button" id="save">Farben übernehmen</button></div>
+  <div class="actions"><button type="button" id="reset" class="secondary">Restore Defaults</button><button type="button" id="save">Apply Colors</button></div>
   <div id="status" role="status"></div>
   <script nonce="${scriptNonce}">
     const vscode = acquireVsCodeApi();
@@ -422,15 +422,15 @@ export function colorSettingsHtml(webview: vscode.Webview, initialPalette = acti
     });
     window.addEventListener('message', event => {
       if (event.data && event.data.type === 'saved') {
-        document.getElementById('status').textContent = 'Farben wurden übernommen.';
+        document.getElementById('status').textContent = 'Colors applied.';
       } else if (event.data && event.data.type === 'reset' && paletteNames.includes(event.data.palette)) {
         for (const input of inputs.filter(candidate => candidate.dataset.palette === event.data.palette)) {
           const value = event.data.colors[input.dataset.key] || input.dataset.default;
           input.value = value;
           input.nextElementSibling.textContent = value.toUpperCase();
         }
-        const label = event.data.palette === 'light' ? 'helle' : 'dunkle';
-        document.getElementById('status').textContent = 'Standardfarben für das ' + label + ' Theme wurden wiederhergestellt.';
+        const label = event.data.palette === 'light' ? 'light' : 'dark';
+        document.getElementById('status').textContent = 'Default colors restored for the ' + label + ' theme.';
       }
     });
   </script>
@@ -446,7 +446,7 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
 
   colorPanel = vscode.window.createWebviewPanel(
     'krlHelperColorSettings',
-    'KRL Syntaxfarben',
+    'KRL Syntax Colors',
     vscode.ViewColumn.One,
     { enableScripts: true }
   );

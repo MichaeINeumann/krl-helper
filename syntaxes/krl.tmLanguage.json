@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "name": "Kuka Robot Language",
+  "name": "KUKA Robot Language",
   "scopeName": "source.krl",
   "fileTypes": ["src", "dat", "sub"],
   "patterns": [

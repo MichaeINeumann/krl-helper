@@ -43,19 +43,19 @@ interface FdatValues {
 export async function convertSelectionToIiqkaFold(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
-    vscode.window.showErrorMessage('KRL-HELPER: No active editor found.');
+    vscode.window.showErrorMessage('KRL Helper: No active editor found.');
     return;
   }
 
   const selection = editor.selection;
   if (selection.isEmpty) {
-    vscode.window.showErrorMessage('KRL-HELPER: Please select a KRL fold block to convert.');
+    vscode.window.showErrorMessage('KRL Helper: Please select a KRL fold block to convert.');
     return;
   }
 
   const selectedText = editor.document.getText(selection);
   if (/^\s*;FOLD\b/im.test(selectedText) || /^\s*;ENDFOLD\b/im.test(selectedText)) {
-    vscode.window.showErrorMessage('KRL-HELPER: Select only the KRL motion block (without any ;FOLD / ;ENDFOLD).');
+    vscode.window.showErrorMessage('KRL Helper: Select only the KRL motion block (without any ;FOLD / ;ENDFOLD).');
     return;
   }
 
@@ -67,7 +67,7 @@ export async function convertSelectionToIiqkaFold(): Promise<void> {
 
   const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
   if (!workspaceFolder) {
-    vscode.window.showErrorMessage('KRL-HELPER: No workspace folder found for the active file.');
+    vscode.window.showErrorMessage('KRL Helper: No workspace folder found for the active file.');
     return;
   }
 
@@ -80,18 +80,18 @@ export async function convertSelectionToIiqkaFold(): Promise<void> {
     if (parsed.isGlobalPoint) {
       configDatPath = await findConfigDat(workspaceFolder, editor.document.uri.fsPath);
       if (!configDatPath) {
-        vscode.window.showErrorMessage('KRL-HELPER: Could not locate KRC/R1/System/$config.dat in the workspace.');
+        vscode.window.showErrorMessage('KRL Helper: Could not locate KRC/R1/System/$config.dat in the workspace.');
         return;
       }
       fdatFilePath = findGlobalPointsDat(configDatPath);
       if (!fdatFilePath) {
-        vscode.window.showErrorMessage('KRL-HELPER: Global_Points.dat not found next to $config.dat.');
+        vscode.window.showErrorMessage('KRL Helper: Global_Points.dat not found next to $config.dat.');
         return;
       }
     } else {
       fdatFilePath = findCompanionDat(editor.document.uri.fsPath);
       if (!fdatFilePath) {
-        vscode.window.showErrorMessage('KRL-HELPER: Companion .dat file not found to resolve TOOL_NO/BASE_NO.');
+        vscode.window.showErrorMessage('KRL Helper: Companion .dat file not found to resolve TOOL_NO/BASE_NO.');
         return;
       }
     }
@@ -101,7 +101,7 @@ export async function convertSelectionToIiqkaFold(): Promise<void> {
       fdatText = await fs.promises.readFile(fdatFilePath, 'utf8');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      vscode.window.showErrorMessage(`KRL-HELPER: Failed to read ${fdatFilePath}. ${message}`);
+      vscode.window.showErrorMessage(`KRL Helper: Failed to read ${fdatFilePath}. ${message}`);
       return;
     }
 
@@ -124,13 +124,13 @@ export async function convertSelectionToIiqkaFold(): Promise<void> {
 
   if (toolIndex === undefined || baseIndex === undefined) {
     const source = parsed.isGlobalPoint ? 'Global_Points.dat' : 'companion .dat file';
-    vscode.window.showErrorMessage(`KRL-HELPER: Tool/Base index not found in selection or ${source}.`);
+    vscode.window.showErrorMessage(`KRL Helper: Tool/Base index not found in selection or ${source}.`);
     return;
   }
 
   configDatPath ??= await findConfigDat(workspaceFolder, editor.document.uri.fsPath);
   if (!configDatPath) {
-    vscode.window.showErrorMessage('KRL-HELPER: Could not locate KRC/R1/System/$config.dat in the workspace.');
+    vscode.window.showErrorMessage('KRL Helper: Could not locate KRC/R1/System/$config.dat in the workspace.');
     return;
   }
 
@@ -139,7 +139,7 @@ export async function convertSelectionToIiqkaFold(): Promise<void> {
     configText = await fs.promises.readFile(configDatPath, 'utf8');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    vscode.window.showErrorMessage(`KRL-HELPER: Failed to read ${configDatPath}. ${message}`);
+    vscode.window.showErrorMessage(`KRL Helper: Failed to read ${configDatPath}. ${message}`);
     return;
   }
 
@@ -210,7 +210,7 @@ function parseFoldSelection(text: string): FoldSelection | null {
   const fdatName = text.match(/FDAT_ACT\s*=\s*([A-Za-z0-9_]+)/i)?.[1];
   const movementMatch = text.match(/^\s*(PTP|LIN|SPTP|SLIN)\s+([gG]?X[^\s;]+)/m);
   if (!movementMatch) {
-    vscode.window.showErrorMessage('KRL-HELPER: Could not find a movement line (PTP/LIN/SPTP/SLIN) in the selection.');
+    vscode.window.showErrorMessage('KRL Helper: Could not find a movement line (PTP/LIN/SPTP/SLIN) in the selection.');
     return null;
   }
 
@@ -225,7 +225,7 @@ function parseFoldSelection(text: string): FoldSelection | null {
   const apxEnabled = apxPattern.test(movementLine) || apxPattern.test(text);
   const velocity = text.match(/BAS\s*\(\s*#(PTP|CP)_PARAMS\s*,\s*([0-9.]+)\s*\)/i)?.[2] ?? '';
   if (!velocity) {
-    vscode.window.showErrorMessage('KRL-HELPER: Velocity not found (BAS(#PTP_PARAMS|#CP_PARAMS, ...)).');
+    vscode.window.showErrorMessage('KRL Helper: Velocity not found (BAS(#PTP_PARAMS|#CP_PARAMS, ...)).');
     return null;
   }
 
@@ -237,7 +237,7 @@ function parseFoldSelection(text: string): FoldSelection | null {
     ? text.match(/PDAT_ACT\s*=\s*([A-Za-z0-9_]+)/i)?.[1] ?? ''
     : text.match(/LDAT_ACT\s*=\s*([A-Za-z0-9_]+)/i)?.[1] ?? '';
   if (!rawMoveDataName) {
-    vscode.window.showErrorMessage('KRL-HELPER: Move data not found (PDAT_ACT/LDAT_ACT).');
+    vscode.window.showErrorMessage('KRL Helper: Move data not found (PDAT_ACT/LDAT_ACT).');
     return null;
   }
 

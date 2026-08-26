@@ -21,18 +21,18 @@ suite('KRL syntax color configuration', () => {
       settings: { foreground: '#654321' }
     };
     const customizations: TokenColorCustomizations = {
-      textMateRules: [foreignGeneralRule, helperRule('Normaler Text', '#C0C0C0')],
-      '[Dark Test Theme]': { textMateRules: [helperRule('Normaler Text', '#C0C0C0')] },
-      '[Dark Test Theme][Light Test Theme]': { textMateRules: [helperRule('Normaler Text', '#C0C0C0')] },
+      textMateRules: [foreignGeneralRule, helperRule('Regular text', '#C0C0C0')],
+      '[Dark Test Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] },
+      '[Dark Test Theme][Light Test Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] },
       '[Light Test Theme]': { textMateRules: [foreignThemeRule] }
     };
 
     const updated = updateCustomizationValue(customizations, true, '[Light Test Theme]', 'light');
 
-    assert.strictEqual(helperForeground(updated, undefined, 'Normaler Text'), '#000000');
-    assert.strictEqual(helperForeground(updated, '[Light Test Theme]', 'Normaler Text'), '#000000');
-    assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Normaler Text'), undefined);
-    assert.strictEqual(helperForeground(updated, '[Dark Test Theme][Light Test Theme]', 'Normaler Text'), undefined);
+    assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(updated, '[Light Test Theme]', 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), undefined);
+    assert.strictEqual(helperForeground(updated, '[Dark Test Theme][Light Test Theme]', 'Regular text'), undefined);
     assert.ok(rulesAt(updated).includes(foreignGeneralRule));
     assert.ok(rulesAt(updated, '[Light Test Theme]').includes(foreignThemeRule));
   });
@@ -42,12 +42,12 @@ suite('KRL syntax color configuration', () => {
     const dark = updateCustomizationValue(light, true, '[Dark Test Theme]', 'dark');
     const lightAgain = updateCustomizationValue(dark, true, '[Light Test Theme]', 'light');
 
-    assert.strictEqual(helperForeground(dark, undefined, 'Normaler Text'), '#C0C0C0');
-    assert.strictEqual(helperForeground(dark, '[Dark Test Theme]', 'Normaler Text'), '#C0C0C0');
-    assert.strictEqual(helperForeground(dark, '[Light Test Theme]', 'Normaler Text'), undefined);
-    assert.strictEqual(helperForeground(lightAgain, undefined, 'Normaler Text'), '#000000');
-    assert.strictEqual(helperForeground(lightAgain, '[Light Test Theme]', 'Normaler Text'), '#000000');
-    assert.strictEqual(helperForeground(lightAgain, '[Dark Test Theme]', 'Normaler Text'), undefined);
+    assert.strictEqual(helperForeground(dark, undefined, 'Regular text'), '#C0C0C0');
+    assert.strictEqual(helperForeground(dark, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
+    assert.strictEqual(helperForeground(dark, '[Light Test Theme]', 'Regular text'), undefined);
+    assert.strictEqual(helperForeground(lightAgain, undefined, 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(lightAgain, '[Light Test Theme]', 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(lightAgain, '[Dark Test Theme]', 'Regular text'), undefined);
     assert.strictEqual(helperRulesAt(lightAgain).length, 19);
     assert.strictEqual(helperRulesAt(lightAgain, '[Light Test Theme]').length, 19);
   });
@@ -93,9 +93,9 @@ suite('KRL syntax color configuration', () => {
       settings: { foreground: '#123456' }
     };
     const customizations: TokenColorCustomizations = {
-      textMateRules: [foreignRule, helperRule('Normaler Text', '#C0C0C0')],
+      textMateRules: [foreignRule, helperRule('Regular text', '#C0C0C0')],
       '[Light Test Theme]': {
-        textMateRules: [foreignRule, helperRule('Normaler Text', '#000000')]
+        textMateRules: [foreignRule, helperRule('Regular text', '#000000')]
       }
     };
 
@@ -123,7 +123,7 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('id="dark-tab" class="tab" role="tab"'));
     assert.ok(html.includes('id="light-tab" class="tab" role="tab"'));
     assert.ok(html.includes('id="dark-panel" role="tabpanel" aria-labelledby="dark-tab" hidden'));
-    assert.ok(html.includes('id="light-panel" role="tabpanel" aria-labelledby="light-tab"><h2>Helles Theme</h2>'));
+    assert.ok(html.includes('id="light-panel" role="tabpanel" aria-labelledby="light-tab"><h2>Light theme</h2>'));
     assert.ok(html.includes('data-palette="dark" data-key="normalText" data-default="#C0C0C0"'));
     assert.ok(html.includes('data-palette="light" data-key="normalText" data-default="#000000"'));
     assert.ok(html.includes("type: 'reset', palette: selectedPalette"));

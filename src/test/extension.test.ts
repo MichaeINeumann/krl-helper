@@ -41,7 +41,7 @@ suite('KRL Helper', () => {
   test('publishes diagnostics for an undeclared KRL variable', async () => {
     const fileName = `krl-helper-diagnostics-${Date.now()}.src`;
     const uri = vscode.Uri.file(path.join(os.tmpdir(), fileName));
-    const contents = Buffer.from('DEF diagnostic_test()\n  b_missing = TRUE\nEND\n', 'utf8');
+    const contents = Buffer.from('DEF DiagnosticTest()\n  bMissing = TRUE\nEND\n', 'utf8');
     await vscode.workspace.fs.writeFile(uri, contents);
 
     try {
@@ -51,7 +51,7 @@ suite('KRL Helper', () => {
 
       const diagnostics = await waitForDiagnostics(uri);
 
-      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("Variable 'b_missing' is not declared")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("Variable 'bMissing' is not declared")));
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     } finally {
       await vscode.workspace.fs.delete(uri, { useTrash: false });

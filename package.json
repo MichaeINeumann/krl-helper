@@ -1,9 +1,10 @@
 {
   "name": "krl-helper",
-  "displayName": "krl-helper",
-  "description": "A VS Code extension to support Kuka Robot Language (KRL), showing functions in the outline.",
-  "version": "0.0.29",
+  "displayName": "KRL Helper",
+  "description": "Language support and productivity tools for KUKA Robot Language (KRL) in Visual Studio Code.",
+  "version": "0.1.0",
   "publisher": "MichaeINeumann",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.91.0"
   },
@@ -11,8 +12,22 @@
     "type": "git",
     "url": "https://github.com/MichaeINeumann/krl-helper.git"
   },
+  "bugs": {
+    "url": "https://github.com/MichaeINeumann/krl-helper/issues"
+  },
+  "homepage": "https://github.com/MichaeINeumann/krl-helper#readme",
   "categories": [
-    "Other"
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "KRL",
+    "KUKA",
+    "robot",
+    "robotics",
+    "industrial-robot",
+    "syntax-highlighting",
+    "language-support"
   ],
   "activationEvents": [
     "onStartupFinished",
@@ -26,15 +41,15 @@
     "commands": [
       {
         "command": "kukaFoldTools.convertSelection",
-        "title": "KRL-HELPER: Convert Selection to iiQKA Fold"
+        "title": "KRL Helper: Convert Selection to iiQKA Fold"
       },
       {
         "command": "krlHelper.openColorSettings",
-        "title": "KRL-HELPER: Syntaxfarben einstellen"
+        "title": "KRL Helper: Configure Syntax Colors"
       },
       {
         "command": "krlHelper.toggleLineComment",
-        "title": "KRL-HELPER: Zeilenkommentar umschalten"
+        "title": "KRL Helper: Toggle Line Comment"
       }
     ],
     "keybindings": [
@@ -63,7 +78,7 @@
           ".sub"
         ],
         "aliases": [
-          "Kuka Robot Language",
+          "KUKA Robot Language",
           "KRL"
         ],
         "configuration": "./language-configuration.json"
@@ -83,147 +98,147 @@
     },
     "configuration": {
       "type": "object",
-      "title": "KRL Syntax Highlighting",
+      "title": "KRL Helper",
       "properties": {
         "krlHighlighting.applyCustomColors": {
           "type": "boolean",
           "default": true,
           "scope": "window",
           "order": 1,
-          "description": "Wendet die unten eingestellten Syntaxfarben auf KRL-Dateien an. Andere TextMate-Farbregeln bleiben erhalten."
+          "description": "Apply the configured syntax colors to KRL files while preserving unrelated TextMate color rules."
         },
         "krlHighlighting.colors.normalText": {
           "type": "string",
           "default": "#C0C0C0",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 10,
-          "description": "Farbe für normalen KRL-Text."
+          "description": "Color for regular KRL text."
         },
         "krlHighlighting.colors.comments": {
           "type": "string",
           "default": "#00FF00",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 11,
-          "description": "Farbe für mit Semikolon beginnende KRL-Kommentare."
+          "description": "Color for semicolon-prefixed KRL comments."
         },
         "krlHighlighting.colors.blockComments": {
           "type": "string",
           "default": "#75715E",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 12,
-          "description": "Farbe für alternative Blockkommentare."
+          "description": "Color for supported alternative block comments."
         },
         "krlHighlighting.colors.strings": {
           "type": "string",
           "default": "#FFFFFF",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 13,
-          "description": "Farbe für Zeichenketten."
+          "description": "Color for string literals."
         },
         "krlHighlighting.colors.numbers": {
           "type": "string",
           "default": "#AE81FF",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 14,
-          "description": "Farbe für Ganz- und Gleitkommazahlen."
+          "description": "Color for integer and floating-point literals."
         },
         "krlHighlighting.colors.programFlow": {
           "type": "string",
           "default": "#F92672",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 15,
-          "description": "Farbe für Programmfluss und Deklarationsschlüsselwörter."
+          "description": "Color for program-flow and declaration keywords."
         },
         "krlHighlighting.colors.controlStructures": {
           "type": "string",
           "default": "#F92672",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 16,
-          "description": "Farbe für Kontrollstrukturen wie THEN, ELSE, FOR, WHILE, CASE und RETURN."
+          "description": "Color for control structures such as THEN, ELSE, FOR, WHILE, CASE, and RETURN."
         },
         "krlHighlighting.colors.ifKeyword": {
           "type": "string",
           "default": "#66D9EF",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 17,
-          "description": "Gemeinsame Farbe für IF, THEN, ELSE und ENDIF."
+          "description": "Shared color for IF, THEN, ELSE, and ENDIF."
         },
         "krlHighlighting.colors.switchKeyword": {
           "type": "string",
           "default": "#AE81FF",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 18,
-          "description": "Gemeinsame Farbe für SWITCH, CASE, DEFAULT und ENDSWITCH."
+          "description": "Shared color for SWITCH, CASE, DEFAULT, and ENDSWITCH."
         },
         "krlHighlighting.colors.doKeyword": {
           "type": "string",
           "default": "#FF8000",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 19,
-          "description": "Farbe für das Schlüsselwort DO."
+          "description": "Color for the DO keyword."
         },
         "krlHighlighting.colors.waitKeyword": {
           "type": "string",
           "default": "#E8ED12",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 20,
-          "description": "Farbe für das Schlüsselwort WAIT."
+          "description": "Color for the WAIT keyword."
         },
         "krlHighlighting.colors.variableNames": {
           "type": "string",
           "default": "#C0C0C0",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 21,
-          "description": "Farbe für KRL-Variablennamen."
+          "description": "Color for KRL variable names."
         },
         "krlHighlighting.colors.setupCommands": {
           "type": "string",
           "default": "#FFC042",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 22,
-          "description": "Farbe für Initialisierungs- und Setup-Befehle."
+          "description": "Color for initialization and setup commands."
         },
         "krlHighlighting.colors.motionCommands": {
           "type": "string",
           "default": "#FF8000",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 23,
-          "description": "Farbe für KRL-Bewegungsbefehle."
+          "description": "Color for KRL motion commands."
         },
         "krlHighlighting.colors.mathFunctions": {
           "type": "string",
           "default": "#FFC042",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 24,
-          "description": "Farbe für mathematische Operatoren und Funktionen."
+          "description": "Color for mathematical operators and functions."
         },
         "krlHighlighting.colors.ioCommands": {
           "type": "string",
           "default": "#FFC042",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 25,
-          "description": "Farbe für E/A-, Trigger- und Interrupt-Befehle."
+          "description": "Color for I/O, trigger, and interrupt commands."
         },
         "krlHighlighting.colors.typeDefinitions": {
           "type": "string",
           "default": "#FFC042",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 26,
-          "description": "Farbe für KRL-Datentypen."
+          "description": "Color for KRL data types."
         },
         "krlHighlighting.colors.systemVariables": {
           "type": "string",
           "default": "#E8ED12",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 27,
-          "description": "Farbe für Systemvariablen mit $-Präfix."
+          "description": "Color for system variables with a $ prefix."
         },
         "krlHighlighting.colors.listFunctions": {
           "type": "string",
           "default": "#FFC042",
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 28,
-          "description": "Farbe für Aufzählungswerte, Wahrheitswerte sowie String- und Listenfunktionen."
+          "description": "Color for enum values, Boolean values, and string or list functions."
         }
       }
     }
