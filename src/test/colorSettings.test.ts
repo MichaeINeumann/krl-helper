@@ -116,17 +116,26 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(cleaned, customizations);
   });
 
-  test('color editor renders separate accessible tabs and palette defaults', () => {
+  test('settings editor renders color and diagnostics tabs with palette defaults', () => {
     const html = colorSettingsHtml({ cspSource: 'test-source' } as vscode.Webview, 'light');
 
     assert.ok(html.includes('role="tablist"'));
     assert.ok(html.includes('id="dark-tab" class="tab" role="tab"'));
     assert.ok(html.includes('id="light-tab" class="tab" role="tab"'));
+    assert.ok(html.includes('id="diagnostics-tab" class="tab" role="tab"'));
     assert.ok(html.includes('id="dark-panel" role="tabpanel" aria-labelledby="dark-tab" hidden'));
-    assert.ok(html.includes('id="light-panel" role="tabpanel" aria-labelledby="light-tab"><h2>Light theme</h2>'));
+    assert.ok(html.includes('id="light-panel" role="tabpanel" aria-labelledby="light-tab"><h2>Light colors</h2>'));
+    assert.ok(html.includes('id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden'));
     assert.ok(html.includes('data-palette="dark" data-key="normalText" data-default="#C0C0C0"'));
     assert.ok(html.includes('data-palette="light" data-key="normalText" data-default="#000000"'));
-    assert.ok(html.includes("type: 'reset', palette: selectedPalette"));
+    assert.ok(html.includes('data-key="localVariablePrefixes"'));
+    assert.ok(html.includes('<option value="user"'));
+    assert.ok(html.includes('<option value="workspace"'));
+    assert.ok(html.includes("type: 'reset', palette: selectedPanel"));
+    assert.ok(html.includes("type: 'diagnosticReset'"));
+    const script = /<script nonce="[^"]+">([\s\S]+)<\/script>/.exec(html)?.[1];
+    assert.ok(script);
+    assert.doesNotThrow(() => new Function(script));
   });
 });
 

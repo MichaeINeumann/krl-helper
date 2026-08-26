@@ -1,0 +1,3 @@
+DEFDAT Private
+DECL GLOBAL BOOL b_Private
+ENDDAT

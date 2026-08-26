@@ -1,0 +1,16 @@
+DEF DiagnosticVisibility(INT nParam)
+  DECL BOOL bLocalOk
+  DECL BOOL b_LocalOnlyGlobal
+  bLocalOk = TRUE
+  bCompanion = TRUE
+  nParam = 1
+  b_Config = TRUE
+  b_Public = TRUE
+  n_SourceGlobal = 1
+  b_LocalOnlyGlobal = TRUE
+  b_Private = TRUE
+  b_PublicNonGlobal = TRUE
+  $IN[i_Configured] = TRUE
+  $IN[i_Missing] = TRUE
+  $OUT[o_Missing] = TRUE
+END

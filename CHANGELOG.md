@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+### Features
+
+- Unified **KRL Helper Settings** editor with Dark Colors, Light Colors, and Diagnostics tabs
+- User- and workspace-scoped prefix settings for local variables, global variables, input aliases, and output aliases
+- Visibility-aware local and global declaration analysis for module DAT files, `$config.dat`, public DAT files, and global source declarations
+- Case-insensitive project function index with hover and Go to Definition
+- Shared `DEF` / `DEFFCT` parser for Outline and function navigation, including unsaved documents
+
+### Documentation
+
+- Clarified that old `;FOLD` and `;ENDFOLD` lines must be deleted manually before iiQKA fold conversion
+
 ## 0.1.0
 
 Initial public Marketplace-ready release.

@@ -1,0 +1,4 @@
+GLOBAL DECL INT n_SourceGlobal
+GLOBAL DEF SharedRoutine(INT nValue)
+GLOBAL DEF ForeignGlobalOnly()
+DEF ForeignPrivateOnly()
