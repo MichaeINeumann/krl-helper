@@ -132,6 +132,27 @@ suite('KRL Helper', () => {
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   });
 
+  test('provides outline symbols for virtual KRL documents', async () => {
+    const scheme = `krl-helper-test-${Date.now()}`;
+    const uri = vscode.Uri.from({ scheme, path: '/virtual.src' });
+    const provider = vscode.workspace.registerTextDocumentContentProvider(scheme, {
+      provideTextDocumentContent: () => 'DEF VirtualRoutine()\nEND\n'
+    });
+
+    try {
+      let document = await vscode.workspace.openTextDocument(uri);
+      document = await vscode.languages.setTextDocumentLanguage(document, 'krl');
+      const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+        'vscode.executeDocumentSymbolProvider', document.uri
+      );
+
+      assert.ok(symbols.some(symbol => symbol.name === 'DEF VirtualRoutine()'));
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      provider.dispose();
+    }
+  });
+
   test('limits ambiguous function hover details while definitions remain available', async () => {
     const definitionLines = Array.from({ length: 7 }, (_, index) => `GLOBAL DEF Ambiguous(INT nValue${index})`);
     const document = await vscode.workspace.openTextDocument({
@@ -340,6 +361,9 @@ suite('KRL Helper', () => {
       '  bShared = TRUE',
       'END',
       'DEF Second(BOOL bShared)',
+      '  /*',
+      '  END',
+      '  */',
       '  bShared = FALSE',
       '  bFirstOnly = FALSE',
       'END',
@@ -488,7 +512,7 @@ suite('KRL Helper', () => {
     }
   });
 
-  test('excludes KRL keywords and I/O aliases from generic prefix diagnostics', async () => {
+  test('excludes directives, KRL keywords, and I/O aliases from generic prefix diagnostics', async () => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(workspaceFolder);
     const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics');
@@ -496,6 +520,8 @@ suite('KRL Helper', () => {
       workspaceFolder.uri, 'KRC', 'R1', 'Program', `keyword-diagnostics-${Date.now()}.src`
     );
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      '&ACCESS RVO',
+      '&REL 1',
       'DEF KeywordDiagnostics(IN INT iCount, INOUT REAL rValue)',
       '  $IN[i_Configured] = TRUE',
       '  $IN[i_Missing] = TRUE',
@@ -506,7 +532,7 @@ suite('KRL Helper', () => {
     ].join('\n')));
 
     try {
-      await configuration.update('localVariablePrefixes', ['i', 'r'], vscode.ConfigurationTarget.Global);
+      await configuration.update('localVariablePrefixes', ['a', 'i', 'r'], vscode.ConfigurationTarget.Global);
       await configuration.update('globalVariablePrefixes', [], vscode.ConfigurationTarget.Global);
       const document = await vscode.workspace.openTextDocument(sourceUri);
       await vscode.window.showTextDocument(document);
@@ -515,7 +541,7 @@ suite('KRL Helper', () => {
       );
       const messages = diagnostics.map(diagnostic => diagnostic.message);
 
-      for (const ignoredName of ['IN', 'INT', 'INOUT', 'REAL', 'RETURN', 'i_Configured']) {
+      for (const ignoredName of ['ACCESS', 'RVO', 'REL', 'IN', 'INT', 'INOUT', 'REAL', 'RETURN', 'i_Configured']) {
         assert.ok(!messages.some(message => message.includes(`'${ignoredName}'`)), `${ignoredName} should be ignored`);
       }
       const missingAliasMessages = messages.filter(message => message.includes("'i_Missing'"));

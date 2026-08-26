@@ -7,7 +7,8 @@ import { FunctionSymbolProvider } from './functionSymbolProvider';
 import { initializeFunctionNavigation } from './functionNavigation';
 import { initializeVariableNavigation } from './variableNavigation';
 
-const krlDocumentSelector: vscode.DocumentSelector = [
+const krlDocumentSelector: vscode.DocumentSelector = { language: 'krl' };
+const krlNavigationSelector: vscode.DocumentSelector = [
   { language: 'krl', scheme: 'file' },
   { language: 'krl', scheme: 'untitled' }
 ];
@@ -21,8 +22,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   initializeColorSettings(context);
   initializeDiagnostics(context);
-  initializeFunctionNavigation(context, krlDocumentSelector);
-  initializeVariableNavigation(context, krlDocumentSelector);
+  initializeFunctionNavigation(context, krlNavigationSelector);
+  initializeVariableNavigation(context, krlNavigationSelector);
 }
 
 export function deactivate(): void {
