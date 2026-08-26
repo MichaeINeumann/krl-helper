@@ -131,6 +131,10 @@ It is not affiliated with, endorsed by, sponsored by, or maintained by KUKA AG.
 
 KUKA and KUKA Robot Language (KRL) are trademarks or product names of their respective owners.
 
+## Support
+
+KRL Helper is maintained as a personal open-source project on a best-effort basis. See [SUPPORT.md](SUPPORT.md) for support expectations, reporting guidance, and the full project disclaimer.
+
 ## Contributing
 
 Issues and pull requests are welcome. Please use synthetic examples and do not submit customer, company, machine, production, or other confidential data.
