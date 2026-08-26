@@ -9,6 +9,16 @@
   "engines": {
     "vscode": "^1.91.0"
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Liest KRL-Projektdateien (.src/.dat/.sub) im Workspace für Navigation und Diagnostik."
+    },
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "Projektübergreifende Navigation/Diagnostik benötigt Dateizugriff und ist in virtuellen Workspaces eingeschränkt."
+    }
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/MichaeINeumann/krl-helper.git"
