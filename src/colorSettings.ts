@@ -1,4 +1,9 @@
 import * as vscode from 'vscode';
+import {
+  DiagnosticSettingKey,
+  diagnosticSettingDefinitions,
+  normalizePrefixList
+} from './diagnosticModel';
 
 const rulePrefix = 'KRL Helper: ';
 const storageKey = 'krlHelper.syntaxColors';
@@ -307,7 +312,66 @@ function createNonce(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function colorSettingsHtml(webview: vscode.Webview, initialPalette = activePalette()): string {
+interface DiagnosticSettingView {
+  key: DiagnosticSettingKey;
+  label: string;
+  description: string;
+  defaultValue: string[];
+  userValue?: string[];
+  workspaceValue?: string[];
+  effectiveValue: string[];
+}
+
+interface DiagnosticSettingsView {
+  hasWorkspace: boolean;
+  settings: DiagnosticSettingView[];
+}
+
+function diagnosticSettingsView(): DiagnosticSettingsView {
+  const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics');
+  const hasWorkspace = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+  return {
+    hasWorkspace,
+    settings: diagnosticSettingDefinitions.map(definition => {
+      const inspected = configuration.inspect<unknown>(definition.key);
+      const userValue = inspected?.globalValue === undefined
+        ? undefined
+        : normalizePrefixList(inspected.globalValue);
+      const workspaceValue = inspected?.workspaceValue === undefined
+        ? undefined
+        : normalizePrefixList(inspected.workspaceValue);
+      const defaultValue = normalizePrefixList(inspected?.defaultValue ?? [...definition.defaultValue]);
+      return {
+        key: definition.key,
+        label: definition.label,
+        description: definition.description,
+        defaultValue,
+        userValue,
+        workspaceValue,
+        effectiveValue: workspaceValue ?? userValue ?? defaultValue
+      };
+    })
+  };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function serializeForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026');
+}
+
+export function colorSettingsHtml(
+  webview: vscode.Webview,
+  initialPalette = activePalette(),
+  diagnostics = diagnosticSettingsView()
+): string {
   const scriptNonce = createNonce();
   const paletteSection = (palette: PaletteName, title: string, description: string): string => {
     const rows = colorDefinitions.map(definition => {
@@ -318,15 +382,21 @@ export function colorSettingsHtml(webview: vscode.Webview, initialPalette = acti
     const hidden = palette === initialPalette ? '' : ' hidden';
     return `<section id="${palette}-panel" role="tabpanel" aria-labelledby="${palette}-tab"${hidden}><h2>${title}</h2><p>${description}</p><div class="panel">${rows}</div></section>`;
   };
-  const palettes = paletteSection(
-    'dark',
-    'Dark theme',
-    'High-contrast defaults for dark editor backgrounds.'
-  ) + paletteSection(
-    'light',
-    'Light theme',
-    'Contrast-optimized defaults for light editor backgrounds.'
-  );
+  const palettes = paletteSection('dark', 'Dark colors', 'High-contrast defaults for dark editor backgrounds.')
+    + paletteSection('light', 'Light colors', 'Contrast-optimized defaults for light editor backgrounds.');
+  const diagnosticCards = diagnostics.settings.map(setting => {
+    const initialScope = diagnostics.hasWorkspace ? 'workspace' : 'user';
+    const initialValue = initialScope === 'workspace'
+      ? setting.workspaceValue ?? setting.userValue ?? setting.defaultValue
+      : setting.userValue ?? setting.defaultValue;
+    return `<article class="diagnostic-card" data-diagnostic-card data-key="${setting.key}">
+      <div class="diagnostic-heading"><div><h3>${escapeHtml(setting.label)}</h3><p>${escapeHtml(setting.description)}</p></div>
+      <label>Scope <select data-diagnostic-scope><option value="user"${initialScope === 'user' ? ' selected' : ''}>User</option><option value="workspace"${initialScope === 'workspace' ? ' selected' : ''}${diagnostics.hasWorkspace ? '' : ' disabled'}>Workspace</option></select></label></div>
+      <div class="inheritance" data-inheritance></div>
+      <textarea rows="3" spellcheck="false" aria-label="${escapeHtml(setting.label)}; one prefix per line">${escapeHtml(initialValue.join('\n'))}</textarea>
+      <div class="card-actions"><button type="button" class="secondary" data-diagnostic-reset>Reset</button><button type="button" data-diagnostic-save>Apply</button></div>
+    </article>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -334,91 +404,137 @@ export function colorSettingsHtml(webview: vscode.Webview, initialPalette = acti
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${scriptNonce}';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KRL Syntax Colors</title>
+  <title>KRL Helper Settings</title>
   <style>
-    body { color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); max-width: 760px; margin: 0 auto; padding: 24px; }
+    body { color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); max-width: 820px; margin: 0 auto; padding: 24px; }
     h1 { font-size: 22px; margin: 0 0 8px; }
     h2 { font-size: 17px; margin: 22px 0 6px; }
+    h3 { font-size: 15px; margin: 0 0 5px; }
     p { color: var(--vscode-descriptionForeground); margin: 0 0 22px; }
     .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--vscode-panel-border); margin-top: 22px; }
     button.tab { color: var(--vscode-foreground); background: transparent; border-bottom: 2px solid transparent; padding: 9px 18px; }
     button.tab:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
     button.tab[aria-selected="true"] { color: var(--vscode-foreground); background: var(--vscode-editor-background); border-bottom-color: var(--vscode-focusBorder); }
-    [role="tabpanel"][hidden] { display: none; }
-    .panel { border: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
+    [role="tabpanel"][hidden], .actions[hidden] { display: none; }
+    .panel, .diagnostic-card { border: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 44px; padding: 5px 14px; border-bottom: 1px solid var(--vscode-panel-border); }
     .row:last-child { border-bottom: 0; }
     .control { display: flex; align-items: center; gap: 12px; }
     input[type=color] { width: 58px; height: 30px; border: 1px solid var(--vscode-input-border); background: transparent; cursor: pointer; padding: 2px; }
     code { min-width: 72px; color: var(--vscode-foreground); }
-    .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+    .actions, .card-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
     button { border: 0; color: var(--vscode-button-foreground); background: var(--vscode-button-background); padding: 8px 15px; cursor: pointer; }
     button:hover { background: var(--vscode-button-hoverBackground); }
+    button:disabled { cursor: default; opacity: .55; }
     button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
     button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
-    button:focus-visible, input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+    .diagnostic-card { margin: 12px 0; padding: 14px; }
+    .diagnostic-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+    .diagnostic-heading p { margin-bottom: 8px; }
+    select, textarea { color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
+    select { margin-left: 7px; padding: 5px; }
+    textarea { box-sizing: border-box; width: 100%; padding: 8px; resize: vertical; font-family: var(--vscode-editor-font-family); }
+    .inheritance { min-height: 18px; margin: 2px 0 7px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+    .card-actions { margin-top: 9px; }
     #status { min-height: 20px; color: var(--vscode-testing-iconPassed); margin-top: 12px; text-align: right; }
   </style>
 </head>
 <body>
-  <h1>KRL Syntax Colors</h1>
-  <p>These colors apply only to KRL files with .src, .dat, and .sub extensions. The matching palette is selected automatically when the theme changes.</p>
-  <div class="tabs" role="tablist" aria-label="Color palette">
-    <button type="button" id="dark-tab" class="tab" role="tab" aria-controls="dark-panel" aria-selected="${initialPalette === 'dark'}" tabindex="${initialPalette === 'dark' ? '0' : '-1'}" data-palette="dark">Dark</button>
-    <button type="button" id="light-tab" class="tab" role="tab" aria-controls="light-panel" aria-selected="${initialPalette === 'light'}" tabindex="${initialPalette === 'light' ? '0' : '-1'}" data-palette="light">Light</button>
+  <h1>KRL Helper Settings</h1>
+  <p>Configure syntax palettes and diagnostic naming conventions for KRL files.</p>
+  <div class="tabs" role="tablist" aria-label="KRL Helper settings">
+    <button type="button" id="dark-tab" class="tab" role="tab" aria-controls="dark-panel" aria-selected="${initialPalette === 'dark'}" tabindex="${initialPalette === 'dark' ? '0' : '-1'}" data-panel="dark">Dark Colors</button>
+    <button type="button" id="light-tab" class="tab" role="tab" aria-controls="light-panel" aria-selected="${initialPalette === 'light'}" tabindex="${initialPalette === 'light' ? '0' : '-1'}" data-panel="light">Light Colors</button>
+    <button type="button" id="diagnostics-tab" class="tab" role="tab" aria-controls="diagnostics-panel" aria-selected="false" tabindex="-1" data-panel="diagnostics">Diagnostics</button>
   </div>
   ${palettes}
-  <div class="actions"><button type="button" id="reset" class="secondary">Restore Defaults</button><button type="button" id="save">Apply Colors</button></div>
+  <section id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden><h2>Diagnostics</h2><p>Enter one literal prefix per line. Values are trimmed and duplicates are removed case-insensitively.</p>${diagnosticCards}</section>
+  <div id="color-actions" class="actions"><button type="button" id="reset" class="secondary">Restore Defaults</button><button type="button" id="save">Apply Colors</button></div>
   <div id="status" role="status"></div>
   <script nonce="${scriptNonce}">
     const vscode = acquireVsCodeApi();
+    const panelNames = ['dark', 'light', 'diagnostics'];
     const paletteNames = ['dark', 'light'];
     const tabs = [...document.querySelectorAll('[role=tab]')];
     const inputs = [...document.querySelectorAll('input[type=color]')];
-    let selectedPalette = '${initialPalette}';
+    const diagnosticCards = [...document.querySelectorAll('[data-diagnostic-card]')];
+    let diagnosticState = ${serializeForScript(diagnostics)};
+    let selectedPanel = '${initialPalette}';
 
-    function selectPalette(palette, moveFocus) {
-      selectedPalette = palette;
-      for (const name of paletteNames) {
-        const selected = name === palette;
+    function selectPanel(panel, moveFocus) {
+      selectedPanel = panel;
+      for (const name of panelNames) {
+        const selected = name === panel;
         const tab = document.getElementById(name + '-tab');
         tab.setAttribute('aria-selected', String(selected));
         tab.tabIndex = selected ? 0 : -1;
         document.getElementById(name + '-panel').hidden = !selected;
       }
-      if (moveFocus) {
-        document.getElementById(palette + '-tab').focus();
-      }
+      document.getElementById('color-actions').hidden = panel === 'diagnostics';
+      if (moveFocus) document.getElementById(panel + '-tab').focus();
       document.getElementById('status').textContent = '';
     }
 
+    function renderDiagnosticCard(card) {
+      const setting = diagnosticState.settings.find(candidate => candidate.key === card.dataset.key);
+      if (!setting) return;
+      const scope = card.querySelector('[data-diagnostic-scope]').value;
+      const textarea = card.querySelector('textarea');
+      const inheritance = card.querySelector('[data-inheritance]');
+      const reset = card.querySelector('[data-diagnostic-reset]');
+      if (scope === 'workspace') {
+        const inherited = setting.workspaceValue === undefined;
+        const values = inherited ? (setting.userValue || setting.defaultValue) : setting.workspaceValue;
+        textarea.value = values.join('\\n');
+        inheritance.textContent = inherited
+          ? (setting.userValue === undefined ? 'Inherited from default' : 'Inherited from User')
+          : 'Workspace override';
+        reset.disabled = inherited;
+      } else {
+        const inherited = setting.userValue === undefined;
+        textarea.value = (inherited ? setting.defaultValue : setting.userValue).join('\\n');
+        inheritance.textContent = inherited ? 'Using default' : 'User override';
+        reset.disabled = inherited;
+      }
+    }
+
     for (const tab of tabs) {
-      tab.addEventListener('click', () => selectPalette(tab.dataset.palette, false));
+      tab.addEventListener('click', () => selectPanel(tab.dataset.panel, false));
       tab.addEventListener('keydown', event => {
-        const currentIndex = paletteNames.indexOf(selectedPalette);
+        const currentIndex = panelNames.indexOf(selectedPanel);
         let nextIndex;
-        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % paletteNames.length;
-        if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + paletteNames.length) % paletteNames.length;
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % panelNames.length;
+        if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + panelNames.length) % panelNames.length;
         if (event.key === 'Home') nextIndex = 0;
-        if (event.key === 'End') nextIndex = paletteNames.length - 1;
+        if (event.key === 'End') nextIndex = panelNames.length - 1;
         if (nextIndex !== undefined) {
           event.preventDefault();
-          selectPalette(paletteNames[nextIndex], true);
+          selectPanel(panelNames[nextIndex], true);
         }
       });
     }
     for (const input of inputs) {
       input.addEventListener('input', () => { input.nextElementSibling.textContent = input.value.toUpperCase(); });
     }
+    for (const card of diagnosticCards) {
+      card.querySelector('[data-diagnostic-scope]').addEventListener('change', () => renderDiagnosticCard(card));
+      card.querySelector('[data-diagnostic-save]').addEventListener('click', () => {
+        const values = card.querySelector('textarea').value.split(/[\\n,]/).map(value => value.trim()).filter(Boolean);
+        vscode.postMessage({ type: 'diagnosticUpdate', key: card.dataset.key, scope: card.querySelector('[data-diagnostic-scope]').value, values });
+      });
+      card.querySelector('[data-diagnostic-reset]').addEventListener('click', () => {
+        vscode.postMessage({ type: 'diagnosticReset', key: card.dataset.key, scope: card.querySelector('[data-diagnostic-scope]').value });
+      });
+      renderDiagnosticCard(card);
+    }
     document.getElementById('save').addEventListener('click', () => {
       const colors = { dark: {}, light: {} };
-      for (const input of inputs) {
-        colors[input.dataset.palette][input.dataset.key] = input.value.toUpperCase();
-      }
+      for (const input of inputs) colors[input.dataset.palette][input.dataset.key] = input.value.toUpperCase();
       vscode.postMessage({ type: 'save', colors });
     });
     document.getElementById('reset').addEventListener('click', () => {
-      vscode.postMessage({ type: 'reset', palette: selectedPalette });
+      vscode.postMessage({ type: 'reset', palette: selectedPanel });
     });
     window.addEventListener('message', event => {
       if (event.data && event.data.type === 'saved') {
@@ -429,8 +545,11 @@ export function colorSettingsHtml(webview: vscode.Webview, initialPalette = acti
           input.value = value;
           input.nextElementSibling.textContent = value.toUpperCase();
         }
-        const label = event.data.palette === 'light' ? 'light' : 'dark';
-        document.getElementById('status').textContent = 'Default colors restored for the ' + label + ' theme.';
+        document.getElementById('status').textContent = 'Default colors restored for the ' + event.data.palette + ' theme.';
+      } else if (event.data && event.data.type === 'diagnosticsState') {
+        diagnosticState = event.data.state;
+        for (const card of diagnosticCards) renderDiagnosticCard(card);
+        document.getElementById('status').textContent = event.data.message || '';
       }
     });
   </script>
@@ -441,12 +560,13 @@ export function colorSettingsHtml(webview: vscode.Webview, initialPalette = acti
 export async function openColorSettings(context: vscode.ExtensionContext): Promise<void> {
   if (colorPanel) {
     colorPanel.reveal(vscode.ViewColumn.One);
+    await colorPanel.webview.postMessage({ type: 'diagnosticsState', state: diagnosticSettingsView() });
     return;
   }
 
   colorPanel = vscode.window.createWebviewPanel(
-    'krlHelperColorSettings',
-    'KRL Syntax Colors',
+    'krlHelperSettings',
+    'KRL Helper Settings',
     vscode.ViewColumn.One,
     { enableScripts: true }
   );
@@ -482,6 +602,23 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
         await synchronizeTokenColors();
       });
       await colorPanel?.webview.postMessage({ type: 'reset', palette, colors });
+    } else if (message?.type === 'diagnosticUpdate' || message?.type === 'diagnosticReset') {
+      const definition = diagnosticSettingDefinitions.find(candidate => candidate.key === message.key);
+      const scope = message.scope === 'workspace' ? 'workspace' : message.scope === 'user' ? 'user' : undefined;
+      if (!definition || !scope || (scope === 'workspace' && !(vscode.workspace.workspaceFolders?.length))) {
+        return;
+      }
+      const target = scope === 'workspace'
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+      const value = message.type === 'diagnosticReset' ? undefined : normalizePrefixList(message.values);
+      await vscode.workspace.getConfiguration('krlHelper.diagnostics').update(definition.key, value, target);
+      const action = message.type === 'diagnosticReset' ? 'reset' : 'updated';
+      await colorPanel?.webview.postMessage({
+        type: 'diagnosticsState',
+        state: diagnosticSettingsView(),
+        message: `${definition.label} ${action} for ${scope === 'workspace' ? 'Workspace' : 'User'}.`
+      });
     }
   }, null, context.subscriptions);
 }
@@ -493,6 +630,9 @@ export function initializeColorSettings(context: vscode.ExtensionContext): void 
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('krlHighlighting')) {
         synchronizeSafely();
+      }
+      if (event.affectsConfiguration('krlHelper.diagnostics')) {
+        void colorPanel?.webview.postMessage({ type: 'diagnosticsState', state: diagnosticSettingsView() });
       }
     }),
     vscode.window.onDidChangeActiveColorTheme(() => {

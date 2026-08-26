@@ -2,7 +2,7 @@
   "name": "krl-helper",
   "displayName": "KRL Helper",
   "description": "Language support and productivity tools for KUKA Robot Language (KRL) in Visual Studio Code.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "MichaeINeumann",
   "license": "MIT",
   "engines": {
@@ -45,7 +45,7 @@
       },
       {
         "command": "krlHelper.openColorSettings",
-        "title": "KRL Helper: Configure Syntax Colors"
+        "title": "KRL Helper: Open Settings"
       },
       {
         "command": "krlHelper.toggleLineComment",
@@ -239,6 +239,56 @@
           "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
           "order": 28,
           "description": "Color for enum values, Boolean values, and string or list functions."
+        },
+        "krlHelper.diagnostics.localVariablePrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "b",
+            "n"
+          ],
+          "scope": "window",
+          "order": 100,
+          "description": "Literal prefixes for variables that must be declared in the current module. Prefix matching is case-insensitive."
+        },
+        "krlHelper.diagnostics.globalVariablePrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "b_",
+            "n_"
+          ],
+          "scope": "window",
+          "order": 101,
+          "description": "Literal prefixes for variables that must be declared in the global project declaration space. These take precedence over local prefixes."
+        },
+        "krlHelper.diagnostics.inputAliasPrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "i_"
+          ],
+          "scope": "window",
+          "order": 102,
+          "description": "Literal prefixes for $IN aliases that must be declared in $config.dat. Prefix matching is case-insensitive."
+        },
+        "krlHelper.diagnostics.outputAliasPrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "o_"
+          ],
+          "scope": "window",
+          "order": 103,
+          "description": "Literal prefixes for $OUT aliases that must be declared in $config.dat. Prefix matching is case-insensitive."
         }
       }
     }

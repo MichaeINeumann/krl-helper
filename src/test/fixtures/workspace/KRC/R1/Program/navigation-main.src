@@ -1,0 +1,7 @@
+DEF SharedRoutine(INT nValue)
+END
+DEF NavigationMain()
+  sharedroutine(1)
+  ForeignGlobalOnly()
+  ForeignPrivateOnly()
+END

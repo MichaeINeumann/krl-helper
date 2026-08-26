@@ -6,13 +6,12 @@ KRL Helper is a Visual Studio Code extension providing language support and prod
 
 - Syntax highlighting for `.src`, `.dat`, and `.sub` files.
 - Separate, configurable syntax-color palettes for dark and light themes.
-- Document Outline entries for local and global `DEF` and `DEFFCT` declarations.
+- Shared function parsing for local and global `DEF` and `DEFFCT` declarations.
+- Document Outline, function hover, and **Go to Definition** for project routines.
 - Conversion of selected `PTP`, `LIN`, `SPTP`, and `SLIN` motion blocks into iiQKA-style folds.
 - Line comments using `;`, including the standard VS Code **Toggle Line Comment** command and dedicated KRL Helper shortcuts.
-- Heuristic diagnostics for undeclared variables in `.src` and `.sub` files.
-- Project-wide declaration indexing across KRL source and data files.
-- Awareness of local declarations, companion DAT declarations, project DAT declarations, and `GLOBAL` declarations in other source files.
-- Targeted diagnostics for `$IN[...]` and `$OUT[...]` aliases that follow the `i_` and `o_` naming conventions but are missing from `$config.dat`.
+- Configurable diagnostics for local variables, global variables, and `$IN[...]` / `$OUT[...]` aliases.
+- Visibility-aware declaration indexing across module files, public DAT files, `$config.dat`, and global source declarations.
 
 ## Installation
 
@@ -28,7 +27,7 @@ For development or testing, build a VSIX and install it from the command line:
 npm ci
 npm run package
 npx @vscode/vsce package
-code --install-extension krl-helper-0.1.0.vsix
+code --install-extension krl-helper-0.2.0.vsix
 ```
 
 You can also use **Extensions: Install from VSIX...** from the Command Palette.
@@ -37,7 +36,9 @@ You can also use **Extensions: Install from VSIX...** from the Command Palette.
 
 Open a `.src`, `.dat`, or `.sub` file. Visual Studio Code automatically selects the KRL language mode.
 
-The Outline view lists supported routine declarations. For example:
+The Outline view lists supported routine declarations. Hovering a user-defined function call shows its complete declaration, visibility, relative file path, and line number. **Go to Definition** returns all visible matches, with declarations in the current document first.
+
+For example:
 
 ```krl
 DEF TestProgram()
@@ -51,11 +52,11 @@ END
 
 Useful commands are available from the Command Palette:
 
-- **KRL Helper: Configure Syntax Colors** opens the dark/light palette editor.
+- **KRL Helper: Open Settings** opens the **Dark Colors**, **Light Colors**, and **Diagnostics** tabs.
 - **KRL Helper: Toggle Line Comment** toggles `;` comments on the selected lines.
 - **KRL Helper: Convert Selection to iiQKA Fold** wraps a selected supported motion block in fold metadata.
 
-For fold conversion, select only the motion block without existing `;FOLD` or `;ENDFOLD` lines. Tool and base indices are read from the selection where possible, then from the companion DAT file or `Global_Points.dat`. Display names are read from the nearest workspace `$config.dat`.
+For fold conversion, select only the motion block. Existing old `;FOLD` and `;ENDFOLD` lines are not removed automatically: delete those lines manually before selecting and converting the motion block. Tool and base indices are read from the selection where possible, then from the companion DAT file or `Global_Points.dat`. Display names are read from the nearest workspace `$config.dat`.
 
 ## Configuration
 
@@ -86,6 +87,33 @@ The following settings accept CSS-style hexadecimal colors such as `#C0C0C0` or 
 | `krlHighlighting.colors.listFunctions` | Boolean and enum values plus string/list functions |
 
 The color editor stores separate light and dark palettes and switches them with the active VS Code theme.
+
+### Diagnostics
+
+The Diagnostics tab and native VS Code Settings expose four array settings:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `krlHelper.diagnostics.localVariablePrefixes` | `["b", "n"]` | Variables that require a local declaration |
+| `krlHelper.diagnostics.globalVariablePrefixes` | `["b_", "n_"]` | Variables that require a global declaration |
+| `krlHelper.diagnostics.inputAliasPrefixes` | `["i_"]` | `$IN[...]` aliases that must exist in `$config.dat` |
+| `krlHelper.diagnostics.outputAliasPrefixes` | `["o_"]` | `$OUT[...]` aliases that must exist in `$config.dat` |
+
+Each Diagnostics field can be edited at **User** or **Workspace** scope. Workspace overrides take precedence; inherited values are marked in the editor. **Reset** removes only the selected scope's override. Prefixes are trimmed, deduplicated case-insensitively, and matched literally. An empty list disables that check.
+
+Global prefixes are evaluated before local prefixes, so `b_Part` is global with the defaults even though it also starts with `b`. A one-character prefix matches only when followed by an uppercase letter, a digit, or `_`; KRL keywords are excluded from variable diagnostics.
+
+Local declarations are taken from the current `.src` or `.sub`, its function parameters, and its same-named companion `.dat`. Global-prefixed variables are checked only against the global declaration space; a normal local declaration does not satisfy that check. Global declarations come from:
+
+- every declaration in `$config.dat`;
+- `DECL GLOBAL` lines in another DAT only when that DAT has a case-insensitive `DEFDAT <Name> PUBLIC` header; and
+- explicit global declarations in project `.src` and `.sub` files.
+
+The diagnostics check declaration existence and visibility. They do not yet validate whether a prefix agrees with the declared KRL data type.
+
+### Function navigation
+
+Function lookup is case-insensitive and supports `DEF`, `GLOBAL DEF`, `DEFFCT`, and `GLOBAL DEFFCT`. All functions in the current document are visible; only global functions are visible from other `.src` and `.sub` files. Comments, known KRL built-ins, and unresolved calls produce no navigation result. The project index uses unsaved open documents and refreshes after file, editor, configuration, and workspace changes.
 
 ## Limitations
 

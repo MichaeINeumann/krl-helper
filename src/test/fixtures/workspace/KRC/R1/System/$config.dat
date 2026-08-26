@@ -1,0 +1,4 @@
+DEFDAT $CONFIG
+DECL BOOL b_Config
+DECL INT i_Configured
+ENDDAT

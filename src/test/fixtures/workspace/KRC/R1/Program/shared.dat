@@ -1,0 +1,4 @@
+DEFDAT Shared PUBLIC
+DECL GLOBAL BOOL b_Public
+DECL BOOL b_PublicNonGlobal
+ENDDAT

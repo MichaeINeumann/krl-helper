@@ -2,6 +2,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { sanitizeForAnalysis } from './diagnosticSanitizer';
+import {
+  classifyVariable,
+  collectDeclarations,
+  collectFunctionParameters,
+  collectGlobalSourceDeclarations,
+  collectProjectDatDeclarations,
+  DiagnosticPrefixConfiguration,
+  diagnosticSettingDefinitions,
+  matchesAnyPrefix,
+  normalizePrefixConfiguration
+} from './diagnosticModel';
 
 interface CachedText {
   mtimeMs: number;
@@ -44,13 +55,9 @@ const projectDeclarationRevisions = new Map<string, number>();
 const maxConfigCandidates = 50;
 const workspaceScanTtlMs = 5000;
 const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
-const declarationKeywords = new Set([
-  'decl', 'global', 'const', 'static', 'public', 'private', 'extern', 'signal',
-  'enum', 'struct', 'char', 'int', 'bool', 'real', 'string', 'double', 'float',
-  'axis', 'e6pos', 'frame', 'pos', 'orient', 'in', 'out', 'inout'
-]);
 const ignoredIdentifiers = new Set([
-  'bool', 'bas', 'base', 'base_data', 'base_name', 'base_no', 'not', 'true',
+  'bool', 'bas', 'base', 'base_data', 'base_name', 'base_no', 'b_and', 'b_or',
+  'b_not', 'b_exor', 'not', 'true',
   'false', 'if', 'then', 'else', 'endif', 'for', 'to', 'step', 'endfor',
   'while', 'endwhile', 'repeat', 'until', 'switch', 'case', 'default',
   'endswitch', 'return', 'def', 'deffct', 'defdat', 'end', 'brake', 'b', 'n'
@@ -58,13 +65,6 @@ const ignoredIdentifiers = new Set([
 const inputAliasRegex = /\$IN\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]/gi;
 const outputAliasRegex = /\$OUT\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]/gi;
 const identifierRegex = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
-const systemFileNames = [
-  '$config.dat',
-  'user.dat',
-  'user_state.dat',
-  'user_loca.dat',
-  'Global_Points.dat'
-];
 
 export function initializeDiagnostics(context: vscode.ExtensionContext): void {
   diagnosticCollection = vscode.languages.createDiagnosticCollection('krl-helper');
@@ -121,6 +121,16 @@ export function initializeDiagnostics(context: vscode.ExtensionContext): void {
           scheduleAnalysis(document);
         }
       }
+    }),
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (!event.affectsConfiguration('krlHelper.diagnostics')) {
+        return;
+      }
+      for (const document of vscode.workspace.textDocuments) {
+        if (document.languageId === 'krl') {
+          scheduleAnalysis(document);
+        }
+      }
     })
   );
 }
@@ -152,44 +162,56 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
   }
 
   const sourceText = document.getText();
-  const declaredNames = new Set<string>();
+  const localNames = new Set<string>();
+  const globalNames = new Set<string>();
   const companionDat = findCompanionDat(sourcePath);
   if (companionDat) {
-    const datText = await readCachedText(companionDat);
+    const datText = await readProjectFileText(companionDat);
     if (datText) {
-      collectDeclarations(datText, declaredNames);
+      collectDeclarations(datText, localNames);
+      collectProjectDatDeclarations(companionDat, datText, globalNames);
     }
   }
-  collectDeclarations(sourceText, declaredNames);
-  collectFunctionParameters(sourceText, declaredNames);
+  collectDeclarations(sourceText, localNames);
+  collectFunctionParameters(sourceText, localNames);
+  collectGlobalSourceDeclarations(sourceText, globalNames);
 
   const declarationRoot = findDeclarationProjectRoot(sourcePath, document);
   if (declarationRoot) {
     const projectDeclarations = await getProjectDeclarations(declarationRoot);
     for (const name of projectDeclarations.names) {
-      declaredNames.add(name);
+      globalNames.add(name);
     }
   }
 
   const configDat = findConfigDat(sourcePath);
-  const systemFiles = configDat ? findSystemFiles(path.dirname(configDat)) : [];
-  const dependencyPaths = [companionDat, ...systemFiles].filter((item): item is string => Boolean(item));
+  const dependencyPaths = [companionDat, configDat].filter((item): item is string => Boolean(item));
   updateDocumentDependencies(document.uri.toString(), dependencyPaths);
 
   const configuredAliases = configDat ? await readConfigAliases(configDat) : new Set<string>();
-  for (const systemFile of systemFiles) {
-    const systemText = await readCachedText(systemFile);
-    if (systemText) {
-      collectDeclarations(systemText, declaredNames);
+  if (configDat) {
+    const configText = await readProjectFileText(configDat);
+    if (configText) {
+      collectDeclarations(configText, globalNames);
     }
   }
 
+  const prefixConfiguration = readPrefixConfiguration(document.uri);
   const sanitizedText = sanitizeForAnalysis(sourceText);
   const diagnostics: vscode.Diagnostic[] = [
-    ...findIoAliasDiagnostics(sanitizedText, document, configuredAliases),
-    ...findUndeclaredDiagnostics(sanitizedText, document, declaredNames)
+    ...findIoAliasDiagnostics(sanitizedText, document, configuredAliases, prefixConfiguration),
+    ...findUndeclaredDiagnostics(sanitizedText, document, localNames, globalNames, prefixConfiguration)
   ];
   diagnosticCollection?.set(document.uri, diagnostics);
+}
+
+function readPrefixConfiguration(resource: vscode.Uri): DiagnosticPrefixConfiguration {
+  const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics', resource);
+  const rawValues = Object.fromEntries(diagnosticSettingDefinitions.map(definition => [
+    definition.key,
+    configuration.get<unknown>(definition.key, [...definition.defaultValue])
+  ]));
+  return normalizePrefixConfiguration(rawValues);
 }
 
 function updateDocumentDependencies(documentUri: string, paths: string[]): void {
@@ -372,9 +394,9 @@ async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclar
     }
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.dat') {
-      collectDeclarations(text, names);
+      collectProjectDatDeclarations(filePath, text, names);
     } else {
-      collectGlobalDeclarations(text, names);
+      collectGlobalSourceDeclarations(text, names);
     }
   }
   return { names, files };
@@ -424,16 +446,6 @@ async function readProjectFileText(filePath: string): Promise<string | null> {
   return readCachedText(filePath);
 }
 
-function collectGlobalDeclarations(text: string, target: Set<string>): void {
-  const lines = stripLineComments(text).split(/\r?\n/);
-  for (const line of lines) {
-    if (!/\bGLOBAL\b/i.test(line) || /\bDEF(?:FCT)?\b/i.test(line) || !isDeclarationLine(line)) {
-      continue;
-    }
-    collectDeclarationLine(line, target);
-  }
-}
-
 function isProjectDeclarationFile(filePath: string): boolean {
   const extension = path.extname(filePath).toLowerCase();
   return extension === '.dat' || extension === '.src' || extension === '.sub';
@@ -454,20 +466,28 @@ function isPathInside(candidatePath: string, root: string): boolean {
   return relative !== '' && !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative);
 }
 
-function findIoAliasDiagnostics(text: string, document: vscode.TextDocument, declaredAliases: Set<string>): vscode.Diagnostic[] {
+function findIoAliasDiagnostics(
+  text: string,
+  document: vscode.TextDocument,
+  declaredAliases: Set<string>,
+  configuration: DiagnosticPrefixConfiguration
+): vscode.Diagnostic[] {
   const diagnostics: vscode.Diagnostic[] = [];
   const definitions = [
-    { regex: inputAliasRegex, prefix: 'i_', label: 'Input' },
-    { regex: outputAliasRegex, prefix: 'o_', label: 'Output' }
+    { regex: inputAliasRegex, prefixes: configuration.inputAliasPrefixes, label: 'Input' },
+    { regex: outputAliasRegex, prefixes: configuration.outputAliasPrefixes, label: 'Output' }
   ];
 
-  for (const { regex, prefix, label } of definitions) {
+  for (const { regex, prefixes, label } of definitions) {
+    if (prefixes.length === 0) {
+      continue;
+    }
     regex.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(text))) {
       const alias = match[1];
       const normalized = alias.toLowerCase();
-      if (!normalized.startsWith(prefix) || declaredAliases.has(normalized)) {
+      if (!matchesAnyPrefix(alias, prefixes) || declaredAliases.has(normalized)) {
         continue;
       }
       const aliasOffset = match.index + match[0].indexOf(alias);
@@ -481,81 +501,41 @@ function findIoAliasDiagnostics(text: string, document: vscode.TextDocument, dec
   return diagnostics;
 }
 
-function findUndeclaredDiagnostics(text: string, document: vscode.TextDocument, declaredNames: Set<string>): vscode.Diagnostic[] {
+function findUndeclaredDiagnostics(
+  text: string,
+  document: vscode.TextDocument,
+  localNames: Set<string>,
+  globalNames: Set<string>,
+  configuration: DiagnosticPrefixConfiguration
+): vscode.Diagnostic[] {
   const diagnostics: vscode.Diagnostic[] = [];
   identifierRegex.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = identifierRegex.exec(text))) {
     const identifier = match[0];
     const normalized = identifier.toLowerCase();
-    if (isSystemVariable(text, match.index) || isMemberAccess(text, match.index) || !isTrackedIdentifier(identifier)) {
+    const scope = classifyVariable(identifier, configuration);
+    if (isSystemVariable(text, match.index) || isMemberAccess(text, match.index)
+        || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
       continue;
     }
+    const declaredNames = scope === 'global' ? globalNames : localNames;
     if (ignoredIdentifiers.has(normalized) || declaredNames.has(normalized)) {
       continue;
     }
+    const declarationSpace = scope === 'global' ? 'global project declarations' : 'the current module';
     diagnostics.push(new vscode.Diagnostic(
       new vscode.Range(document.positionAt(match.index), document.positionAt(match.index + identifier.length)),
-      `Variable '${identifier}' is not declared in the current module or project declarations.`,
+      `Variable '${identifier}' is not declared in ${declarationSpace}.`,
       vscode.DiagnosticSeverity.Error
     ));
   }
   return diagnostics;
 }
 
-function collectDeclarations(text: string, target: Set<string>): void {
-  const lines = stripLineComments(text).split(/\r?\n/);
-  for (const line of lines) {
-    if (isDeclarationLine(line)) {
-      collectDeclarationLine(line, target);
-    }
-  }
-}
-
-function collectDeclarationLine(line: string, target: Set<string>): void {
-  const identifiers = line.split('=')[0].match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
-  for (const identifier of identifiers) {
-    const normalized = identifier.toLowerCase();
-    if (!declarationKeywords.has(normalized)) {
-      target.add(normalized);
-    }
-  }
-}
-
-function collectFunctionParameters(text: string, target: Set<string>): void {
-  const withoutComments = stripLineComments(text);
-  const functionRegex = /\bDEF(?:FCT)?\b[^(]*\(([^)]*)\)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = functionRegex.exec(withoutComments))) {
-    const identifiers = match[1].match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
-    for (const identifier of identifiers) {
-      const normalized = identifier.toLowerCase();
-      if (!declarationKeywords.has(normalized)) {
-        target.add(normalized);
-      }
-    }
-  }
-}
-
-function stripLineComments(text: string): string {
-  return text.replace(/;.*$/gm, '');
-}
-
 function isSupportedSource(filePath: string): boolean {
   const extension = path.extname(filePath).toLowerCase();
   return extension === '.src' || extension === '.sub';
-}
-
-function isTrackedIdentifier(identifier: string): boolean {
-  if (identifier.length < 2) {
-    return false;
-  }
-  const prefix = identifier[0];
-  if (prefix !== 'b' && prefix !== 'B' && prefix !== 'n' && prefix !== 'N') {
-    return false;
-  }
-  const secondCharacter = identifier[1];
-  return secondCharacter === '_' || /[A-Z0-9]/.test(secondCharacter);
 }
 
 function isSystemVariable(text: string, offset: number): boolean {
@@ -572,14 +552,12 @@ function isMemberAccess(text: string, offset: number): boolean {
   return false;
 }
 
-function isDeclarationLine(line: string): boolean {
-  if (/\bDECL\b/i.test(line)) {
-    return true;
+function isFunctionIdentifier(text: string, endOffset: number): boolean {
+  let offset = endOffset;
+  while (offset < text.length && (text[offset] === ' ' || text[offset] === '\t')) {
+    offset += 1;
   }
-  if (!/\bGLOBAL\b/i.test(line) || /\bDEF(?:FCT)?\b/i.test(line)) {
-    return false;
-  }
-  return /\b(BOOL|INT|REAL|CHAR|STRING|DOUBLE|FLOAT|AXIS|E6POS|FRAME|POS|ORIENT)\b/i.test(line);
+  return text[offset] === '(';
 }
 
 function findCompanionDat(sourcePath: string): string | null {
@@ -590,7 +568,17 @@ function findCompanionDat(sourcePath: string): string | null {
     return lowerCasePath;
   }
   const upperCasePath = path.join(directory, `${baseName}.DAT`);
-  return fs.existsSync(upperCasePath) ? upperCasePath : null;
+  if (fs.existsSync(upperCasePath)) {
+    return upperCasePath;
+  }
+  try {
+    const expectedName = `${baseName}.dat`.toLowerCase();
+    const matchingEntry = fs.readdirSync(directory, { withFileTypes: true })
+      .find(entry => entry.isFile() && entry.name.toLowerCase() === expectedName);
+    return matchingEntry ? path.join(directory, matchingEntry.name) : null;
+  } catch {
+    return null;
+  }
 }
 
 function findConfigDat(sourcePath: string): string | null {
@@ -608,47 +596,6 @@ function findConfigDat(sourcePath: string): string | null {
   }
   const anyCandidates = getConfigCandidates(false);
   return anyCandidates.length > 0 ? nearestPath(sourcePath, anyCandidates) : null;
-}
-
-function findSystemFiles(systemDirectory: string): string[] {
-  const files: string[] = [];
-  for (const fileName of systemFileNames) {
-    const filePath = resolveFileCaseInsensitive(systemDirectory, fileName);
-    if (filePath) {
-      files.push(filePath);
-    }
-  }
-  return Array.from(new Set(files));
-}
-
-function resolveFileCaseInsensitive(directory: string, fileName: string): string | null {
-  const exactPath = path.join(directory, fileName);
-  if (fs.existsSync(exactPath)) {
-    return exactPath;
-  }
-  const lowerName = fileName.toLowerCase();
-  if (lowerName !== fileName) {
-    const lowerPath = path.join(directory, lowerName);
-    if (fs.existsSync(lowerPath)) {
-      return lowerPath;
-    }
-  }
-  const upperName = fileName.toUpperCase();
-  if (upperName !== fileName) {
-    const upperPath = path.join(directory, upperName);
-    if (fs.existsSync(upperPath)) {
-      return upperPath;
-    }
-  }
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(directory, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  const matchingEntry = entries.find(entry => entry.isFile() && entry.name.toLowerCase() === lowerName);
-  return matchingEntry ? path.join(directory, matchingEntry.name) : null;
 }
 
 function findProjectRoot(filePath: string): string | null {
@@ -779,6 +726,13 @@ async function readCachedFile(filePath: string): Promise<CachedText | null> {
 }
 
 async function readConfigAliases(configPath: string): Promise<Set<string>> {
+  const key = normalizePathKey(configPath);
+  const openDocument = vscode.workspace.textDocuments.find(document =>
+    document.uri.scheme === 'file' && normalizePathKey(document.uri.fsPath) === key
+  );
+  if (openDocument) {
+    return parseConfigAliases(openDocument.getText());
+  }
   const cachedFile = await readCachedFile(configPath);
   if (!cachedFile) {
     return new Set<string>();
@@ -793,16 +747,5 @@ async function readConfigAliases(configPath: string): Promise<Set<string>> {
 }
 
 function parseConfigAliases(configText: string): Set<string> {
-  const names = new Set<string>();
-  const lines = stripLineComments(configText).split(/\r?\n/);
-  for (const line of lines) {
-    if (!/\bDECL\b/i.test(line)) {
-      continue;
-    }
-    const aliases = line.match(/\b[iIoO]_[A-Za-z0-9_]+\b/g) ?? [];
-    for (const alias of aliases) {
-      names.add(alias.toLowerCase());
-    }
-  }
-  return names;
+  return collectDeclarations(configText);
 }
