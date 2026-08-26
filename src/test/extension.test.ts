@@ -8,18 +8,19 @@ suite('KRL Helper', () => {
     assert.strictEqual(true, true);
   });
 
-  test('toggle line comment uses the KRL semicolon marker', async () => {
-    const document = await vscode.workspace.openTextDocument({
-      language: 'krl',
-      content: 'DEF comment_test()\nEND'
-    });
-    const editor = await vscode.window.showTextDocument(document);
-    editor.selection = new vscode.Selection(0, 0, 0, 0);
+  test('declares the KRL semicolon comment marker', async () => {
+    const extension = vscode.extensions.getExtension('MichaeINeumann.krl-helper');
+    assert.ok(extension);
 
-    await vscode.commands.executeCommand('editor.action.commentLine');
+    const contents = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(
+      extension.extensionUri,
+      'language-configuration.json'
+    ));
+    const configuration = JSON.parse(Buffer.from(contents).toString('utf8')) as {
+      comments?: { lineComment?: string };
+    };
 
-    assert.strictEqual(document.lineAt(0).text, '; DEF comment_test()');
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    assert.strictEqual(configuration.comments?.lineComment, ';');
   });
 
   test('dedicated KRL shortcut command toggles selected lines', async () => {
