@@ -112,8 +112,9 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     const currentSourceId = uriKey(document.uri);
     const currentDefinitions = indexDocument(document);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    const projectDefinitions = workspaceFolder
-      ? await this.projectVariables(workspaceFolder.uri.fsPath)
+    const projectRoot = workspaceFolder?.uri.fsPath ?? inferKrlProjectRoot(document.uri);
+    const projectDefinitions = projectRoot
+      ? await this.projectVariables(projectRoot)
       : await siblingCompanionVariables(document);
     const foreignDefinitions = projectDefinitions.filter(definition => definition.sourceId !== currentSourceId);
     const indexedDefinitions = [...currentDefinitions, ...foreignDefinitions];
@@ -122,12 +123,16 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
       definition.sourceId === currentSourceId || isCompanionDefinition(document.uri, definition)
     );
     const globalDefinitions = selectGlobalDefinitions(document.uri, allDefinitions, indexedDefinitions);
+    const navigationGlobalDefinitions = selectNavigationGlobalDefinitions(
+      globalDefinitions,
+      allDefinitions
+    );
     const scope = classifyVariable(identifier, readPrefixConfiguration());
     const visible = scope === 'local'
-      ? localDefinitions
+      ? localDefinitions.length > 0 ? localDefinitions : navigationGlobalDefinitions
       : scope === 'global'
-        ? globalDefinitions
-        : [...localDefinitions, ...globalDefinitions];
+        ? navigationGlobalDefinitions
+        : [...localDefinitions, ...navigationGlobalDefinitions];
     return deduplicateDefinitions(visible);
   }
 
@@ -231,6 +236,20 @@ function selectGlobalDefinitions(
   });
 }
 
+function selectNavigationGlobalDefinitions(
+  strictDefinitions: IndexedKrlVariable[],
+  matchingDefinitions: IndexedKrlVariable[]
+): IndexedKrlVariable[] {
+  const legacyPublicDatGlobals = matchingDefinitions.filter(definition =>
+    definition.fileKind === 'dat'
+    && !definition.configDat
+    && definition.publicDat
+    && definition.kind === 'declaration'
+    && definition.global
+  );
+  return deduplicateDefinitions([...strictDefinitions, ...legacyPublicDatGlobals]);
+}
+
 function selectNearestConfigId(
   currentUri: vscode.Uri,
   definitions: IndexedKrlVariable[]
@@ -301,6 +320,21 @@ async function siblingCompanionVariables(document: vscode.TextDocument): Promise
   } catch {
     return [];
   }
+}
+
+function inferKrlProjectRoot(uri: vscode.Uri): string | undefined {
+  if (uri.scheme !== 'file') {
+    return undefined;
+  }
+  const parsedPath = path.parse(uri.fsPath);
+  const segments = path.relative(parsedPath.root, uri.fsPath).split(path.sep).filter(Boolean);
+  const krcIndex = segments.findIndex((segment, index) =>
+    segment.toLowerCase() === 'krc' && segments[index + 1]?.toLowerCase() === 'r1'
+  );
+  if (krcIndex === -1) {
+    return undefined;
+  }
+  return path.join(parsedPath.root, ...segments.slice(0, krcIndex + 2));
 }
 
 async function scanProjectFiles(root: string): Promise<string[]> {

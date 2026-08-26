@@ -115,7 +115,7 @@ The diagnostics check declaration existence and visibility. They do not yet vali
 
 Function lookup is case-insensitive and supports `DEF`, `GLOBAL DEF`, `DEFFCT`, and `GLOBAL DEFFCT`. All functions in the current document are visible. From another `.src` or `.sub`, explicit global routines and the module entry routine whose name matches the source filename are visible. Other local helper routines remain private. Comments, known KRL built-ins, and unresolved calls produce no navigation result.
 
-Variable **Go to Definition** follows the same visibility rules as diagnostics: current source declarations and parameters, the same-named companion DAT, `$config.dat`, public `DECL GLOBAL` DAT declarations, and explicit global source declarations. Prefix-classified global variables never fall back to a same-named local declaration. Both project indexes use unsaved open documents and refresh after file, editor, configuration, and workspace changes.
+Variable **Go to Definition** prioritizes the same visibility rules as diagnostics: current source declarations and parameters, the same-named companion DAT, `$config.dat`, public `DECL GLOBAL` DAT declarations, and explicit global source declarations. If no valid local declaration exists, navigation can still lead to a syntactic `GLOBAL <type>` declaration in a public DAT so that the visibility error can be inspected and repaired; this does not suppress the diagnostic. Prefix-classified global variables never fall back to a same-named local declaration. For individually opened files below a `KRC/R1` tree, navigation infers that tree as the project root. Both project indexes use unsaved open documents and refresh after file, editor, configuration, and workspace changes.
 
 ## Limitations
 

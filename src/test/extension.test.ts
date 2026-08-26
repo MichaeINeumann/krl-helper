@@ -279,6 +279,46 @@ suite('KRL Helper', () => {
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   });
 
+  test('navigates to a legacy public DAT global without accepting it as locally visible', async () => {
+    const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-krc-project-${Date.now()}`));
+    const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'external.src');
+    const globalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'legacy-global.dat');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program'));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF External()',
+      '  advanceStop(bAdvanceStop)',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(globalUri, Buffer.from([
+      'DEFDAT LegacyGlobal PUBLIC',
+      'GLOBAL BOOL bAdvanceStop=TRUE',
+      'ENDDAT',
+      ''
+    ].join('\n')));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'"))
+      );
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
+
+      const position = document.positionAt(lastIdentifierOffset(document.getText(), 'bAdvanceStop'));
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', sourceUri, position
+      );
+      assert.ok(definitions.some(definition =>
+        definition.uri.toString() === globalUri.toString() && definition.range.start.line === 1
+      ));
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    } finally {
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('uses Workspace diagnostic overrides before User values and resets scopes independently', async () => {
     const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics');
     try {
