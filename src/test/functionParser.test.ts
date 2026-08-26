@@ -46,4 +46,24 @@ suite('KRL function parser', () => {
     assert.deepStrictEqual(visible.map(definition => definition.sourceId), ['current', 'current', 'foreign']);
     assert.deepStrictEqual(visible.map(definition => definition.global), [false, true, true]);
   });
+
+  test('makes the foreign routine matching its source module name visible', () => {
+    const current = parseKrlFunctions('DEF Caller()')
+      .map(definition => ({ ...definition, sourceId: 'current', moduleEntry: false }));
+    const foreign = parseKrlFunctions('DEF r_mvHome()\nDEF LocalHelper()')
+      .map(definition => ({
+        ...definition,
+        sourceId: 'r_mvhome.src',
+        moduleEntry: definition.normalizedName === 'r_mvhome'
+      }));
+
+    assert.strictEqual(
+      selectVisibleKrlFunctions([...current, ...foreign], 'current', 'r_mvhome').length,
+      1
+    );
+    assert.strictEqual(
+      selectVisibleKrlFunctions([...current, ...foreign], 'current', 'localhelper').length,
+      0
+    );
+  });
 });

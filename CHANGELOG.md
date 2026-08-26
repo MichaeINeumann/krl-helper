@@ -7,7 +7,8 @@
 - Unified **KRL Helper Settings** editor with Dark Colors, Light Colors, and Diagnostics tabs
 - User- and workspace-scoped prefix settings for local variables, global variables, input aliases, and output aliases
 - Visibility-aware local and global declaration analysis for module DAT files, `$config.dat`, public DAT files, and global source declarations
-- Case-insensitive project function index with hover and Go to Definition
+- Case-insensitive project function index with hover and Go to Definition, including same-named module entry routines
+- Go to Definition for visible local, companion-DAT, parameter, and project-global variables
 - Shared `DEF` / `DEFFCT` parser for Outline and function navigation, including unsaved documents
 
 ### Documentation

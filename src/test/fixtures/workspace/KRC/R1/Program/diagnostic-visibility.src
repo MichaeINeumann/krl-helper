@@ -1,7 +1,9 @@
 DEF DiagnosticVisibility(INT nParam)
   DECL BOOL bLocalOk
+  REAL nTolerance
   DECL BOOL b_LocalOnlyGlobal
   bLocalOk = TRUE
+  nTolerance = 0.5
   bCompanion = TRUE
   nParam = 1
   b_Config = TRUE

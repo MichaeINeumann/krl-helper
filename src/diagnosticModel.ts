@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { sanitizeForAnalysis } from './diagnosticSanitizer';
+import { parseKrlVariableDeclarations } from './variableParser';
 
 export const diagnosticSettingDefinitions = [
   {
@@ -42,10 +43,6 @@ export interface DiagnosticPrefixConfiguration {
 }
 
 export type VariableScope = 'local' | 'global';
-
-const declarationQualifiers = new Set([
-  'const', 'static', 'public', 'private', 'extern', 'global', 'decl', 'in', 'out', 'inout'
-]);
 
 export function normalizePrefixList(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -108,30 +105,18 @@ export function classifyVariable(
 }
 
 export function collectDeclarations(text: string, target: Set<string> = new Set<string>()): Set<string> {
-  const sanitized = sanitizeForAnalysis(text);
-  for (const line of sanitized.split(/\r?\n/)) {
-    const declaration = parseDeclarationLine(line);
-    for (const name of declaration?.names ?? []) {
-      target.add(name);
+  for (const declaration of parseKrlVariableDeclarations(text)) {
+    if (declaration.kind !== 'parameter') {
+      target.add(declaration.normalizedName);
     }
   }
   return target;
 }
 
 export function collectFunctionParameters(text: string, target: Set<string> = new Set<string>()): Set<string> {
-  const sanitized = sanitizeForAnalysis(text);
-  const functionPattern = /^\s*(?:GLOBAL\s+)?DEF(?:FCT)?\b[^\r\n(]*\(([^)]*)\)/gim;
-  let match: RegExpExecArray | null;
-  while ((match = functionPattern.exec(sanitized))) {
-    for (const parameter of match[1].split(',')) {
-      const identifiers = parameter.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [];
-      while (identifiers[0] && declarationQualifiers.has(identifiers[0].toLowerCase())) {
-        identifiers.shift();
-      }
-      const parameterName = identifiers.length === 1 ? identifiers[0] : identifiers[1];
-      if (parameterName) {
-        target.add(parameterName.toLowerCase());
-      }
+  for (const declaration of parseKrlVariableDeclarations(text)) {
+    if (declaration.kind === 'parameter') {
+      target.add(declaration.normalizedName);
     }
   }
   return target;
@@ -141,14 +126,9 @@ export function collectGlobalSourceDeclarations(
   text: string,
   target: Set<string> = new Set<string>()
 ): Set<string> {
-  const sanitized = sanitizeForAnalysis(text);
-  for (const line of sanitized.split(/\r?\n/)) {
-    const declaration = parseDeclarationLine(line);
-    if (!declaration?.global) {
-      continue;
-    }
-    for (const name of declaration.names) {
-      target.add(name);
+  for (const declaration of parseKrlVariableDeclarations(text)) {
+    if (declaration.kind === 'declaration' && declaration.global) {
+      target.add(declaration.normalizedName);
     }
   }
   return target;
@@ -165,14 +145,9 @@ export function collectProjectDatDeclarations(
   if (!hasPublicDefdatHeader(text)) {
     return target;
   }
-  const sanitized = sanitizeForAnalysis(text);
-  for (const line of sanitized.split(/\r?\n/)) {
-    if (!/^\s*DECL\s+GLOBAL\b/i.test(line)) {
-      continue;
-    }
-    const declaration = parseDeclarationLine(line);
-    for (const name of declaration?.names ?? []) {
-      target.add(name);
+  for (const declaration of parseKrlVariableDeclarations(text)) {
+    if (declaration.kind === 'declaration' && declaration.declGlobal) {
+      target.add(declaration.normalizedName);
     }
   }
   return target;
@@ -181,53 +156,4 @@ export function collectProjectDatDeclarations(
 export function hasPublicDefdatHeader(text: string): boolean {
   const sanitized = sanitizeForAnalysis(text);
   return /^\s*DEFDAT\s+[A-Za-z_][A-Za-z0-9_]*\s+PUBLIC\b/im.test(sanitized);
-}
-
-interface ParsedDeclaration {
-  global: boolean;
-  names: string[];
-}
-
-function parseDeclarationLine(line: string): ParsedDeclaration | undefined {
-  const leftHandSide = line.split('=')[0];
-  const prefix = /^\s*(?:(DECL)\s+(?:(GLOBAL)\s+)?|(GLOBAL)\s+(?:(DECL)\s+)?)/i.exec(leftHandSide);
-  if (!prefix) {
-    return undefined;
-  }
-  const global = Boolean(prefix[2] || prefix[3]);
-  let remainder = leftHandSide.slice(prefix[0].length);
-  if (/^\s*DEF(?:FCT)?\b/i.test(remainder)) {
-    return undefined;
-  }
-  let leadingIdentifier = /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(remainder);
-  while (leadingIdentifier && declarationQualifiers.has(leadingIdentifier[1].toLowerCase())) {
-    remainder = remainder.slice(leadingIdentifier[0].length);
-    leadingIdentifier = /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(remainder);
-  }
-  if (!leadingIdentifier) {
-    return { global, names: [] };
-  }
-  // Remove the KRL or user-defined type, then parse comma-separated declarators.
-  remainder = remainder.slice(leadingIdentifier[0].length);
-  const declarators: string[] = [];
-  let bracketDepth = 0;
-  let declaratorStart = 0;
-  for (let index = 0; index <= remainder.length; index += 1) {
-    const character = remainder[index];
-    if (character === '[') {
-      bracketDepth += 1;
-    } else if (character === ']') {
-      bracketDepth = Math.max(0, bracketDepth - 1);
-    }
-    if ((character === ',' && bracketDepth === 0) || index === remainder.length) {
-      declarators.push(remainder.slice(declaratorStart, index));
-      declaratorStart = index + 1;
-    }
-  }
-  return {
-    global,
-    names: declarators
-      .map(declarator => /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(declarator)?.[1]?.toLowerCase())
-      .filter((name): name is string => Boolean(name))
-  };
 }

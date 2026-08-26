@@ -4,6 +4,7 @@ dist/
 coverage/
 .nyc_output/
 .vscode-test/
+/src/test/fixtures/workspace/.vscode/
 
 *.vsix
 *.zip
