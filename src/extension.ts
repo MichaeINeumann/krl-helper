@@ -1,42 +1,21 @@
 import * as vscode from 'vscode';
+import { initializeColorSettings } from './colorSettings';
+import { initializeDiagnostics } from './diagnostics';
+import { toggleKrlLineComments } from './commentToggle';
+import { convertSelectionToIiqkaFold } from './foldConversion';
+import { FunctionSymbolProvider } from './functionSymbolProvider';
 
-export function activate(context: vscode.ExtensionContext) {
-  vscode.languages.registerDocumentSymbolProvider({ language: 'krl' }, new FunctionSymbolProvider());
+export function activate(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(
+    vscode.languages.registerDocumentSymbolProvider({ language: 'krl' }, new FunctionSymbolProvider()),
+    vscode.commands.registerCommand('kukaFoldTools.convertSelection', convertSelectionToIiqkaFold),
+    vscode.commands.registerTextEditorCommand('krlHelper.toggleLineComment', toggleKrlLineComments)
+  );
+
+  initializeColorSettings(context);
+  initializeDiagnostics(context);
 }
 
-class FunctionSymbolProvider implements vscode.DocumentSymbolProvider {
-  public provideDocumentSymbols(document: vscode.TextDocument): vscode.ProviderResult<vscode.SymbolInformation[]> {
-    const symbols: vscode.SymbolInformation[] = [];
-    
-    // Regular expressions for matching KRL functions and methods
-    const functionRegexes = [
-      { regex: /GLOBAL\s+DEF\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: true },   // Global method
-      { regex: /GLOBAL\s+DEFFCT\s+\w+\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: true }, // Global function
-      { regex: /DEF\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Method, isGlobal: false },             // Method
-      { regex: /DEFFCT\s+\w+\s+\w+\s*\(.*\)/g, kind: vscode.SymbolKind.Function, isGlobal: false }         // Function        
-    ];
-    
-    const text = document.getText();
-
-    for (const { regex, kind, isGlobal } of functionRegexes) {
-      let match;
-      while ((match = regex.exec(text))) {
-        const matchText = match[0];
-        const startPos = document.positionAt(match.index);
-        const endPos = document.positionAt(match.index + matchText.length);
-        const range = new vscode.Range(startPos, endPos);
-        const symbol = new vscode.SymbolInformation(
-          matchText,
-          isGlobal ? vscode.SymbolKind.Namespace : kind,  // Use Namespace kind for global functions and methods
-          isGlobal ? 'Global' : '',
-          new vscode.Location(document.uri, range)
-        );
-        symbols.push(symbol);
-      }
-    }
-
-    return symbols;
-  }
+export function deactivate(): void {
+  // All resources are owned by the extension context and disposed by VS Code.
 }
-
-export function deactivate() {}

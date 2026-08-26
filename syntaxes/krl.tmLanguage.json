@@ -1,0 +1,205 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Kuka Robot Language",
+  "scopeName": "source.krl",
+  "fileTypes": ["src", "dat", "sub"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#systemVariables" },
+    { "include": "#numbers" },
+    { "include": "#individualKeywords" },
+    { "include": "#controlStructures" },
+    { "include": "#motionCommands" },
+    { "include": "#ioCommands" },
+    { "include": "#setupCommands" },
+    { "include": "#mathFunctions" },
+    { "include": "#listFunctions" },
+    { "include": "#typeDefinitions" },
+    { "include": "#programFlow" },
+    { "include": "#variables" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.semicolon.krl",
+          "begin": ";",
+          "end": "$"
+        },
+        {
+          "name": "comment.block.alternative.krl",
+          "begin": "/\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.block.alternative.krl",
+          "begin": "\\(\\*",
+          "end": "\\*\\)"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.krl",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.krl",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.krl",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.krl",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "systemVariables": {
+      "patterns": [
+        {
+          "name": "variable.other.system.krl",
+          "match": "\\$[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.krl",
+          "match": "(?<![A-Za-z0-9_])[-+]?(?:[0-9]+\\.[0-9]*|\\.[0-9]+|[0-9]+)(?:[Ee][-+]?[0-9]+)?(?![A-Za-z0-9_])"
+        }
+      ]
+    },
+    "programFlow": {
+      "patterns": [
+        {
+          "name": "keyword.control.flow.krl",
+          "match": "(?i:\\b(?:DEF|DEFFCT|DEFDAT|END|ENDFCT|ENDDAT|GLOBAL|DECL|CONST|EXT)\\b)"
+        }
+      ]
+    },
+    "individualKeywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.if.krl",
+          "match": "(?i:\\b(?:IF|THEN|ELSE|ENDIF)\\b)"
+        },
+        {
+          "name": "keyword.control.switch.krl",
+          "match": "(?i:\\b(?:SWITCH|CASE|DEFAULT|ENDSWITCH)\\b)"
+        },
+        {
+          "name": "keyword.control.do.krl",
+          "match": "(?i:\\bDO\\b)"
+        },
+        {
+          "name": "keyword.control.wait.krl",
+          "match": "(?i:\\bWAIT\\b)"
+        }
+      ]
+    },
+    "controlStructures": {
+      "patterns": [
+        {
+          "name": "keyword.control.structure.krl",
+          "match": "(?i:\\b(?:FOR|TO|STEP|ENDFOR|WHILE|ENDWHILE|REPEAT|UNTIL|LOOP|ENDLOOP|GOTO|RETURN|EXIT|CONTINUE|HALT)\\b)"
+        }
+      ]
+    },
+    "setupCommands": {
+      "patterns": [
+        {
+          "name": "support.function.setup.krl",
+          "match": "(?i:\\b(?:BAS|INI|SET_CD_PARAMS|SET_MOTIONPARAMSET|SET_KRLMSG|CLEAR_KRLMSG|SET_KRLDLG|CLEAR_KRLDLG|CWRITE|CREAD|SWRITE|SREAD|SWRITE_EXT|SREAD_EXT)(?=\\s*\\())"
+        },
+        {
+          "name": "keyword.other.setup.krl",
+          "match": "(?i:\\bSEC\\b)"
+        },
+        {
+          "name": "keyword.other.preprocessor.krl",
+          "match": "(?i:^\\s*&(?:ACCESS|REL|PARAM|COMMENT|RVPACKAGE|HIDDEN|NOEDIT|VERSION)\\b)"
+        }
+      ]
+    },
+    "motionCommands": {
+      "patterns": [
+        {
+          "name": "keyword.control.motion.krl",
+          "match": "(?i:\\b(?:PTP|LIN|CIRC|SPTP|SLIN|SCIRC|SPL|SPLINE|ENDSPLINE|PTP_REL|LIN_REL|CIRC_REL)\\b)"
+        },
+        {
+          "name": "constant.other.motion-blending.krl",
+          "match": "(?i:\\bC_(?:DIS|VEL|ORI|PTP|CP|SPL|APX|APS)\\b)"
+        }
+      ]
+    },
+    "mathFunctions": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.krl",
+          "match": "(?i:\\b(?:AND|OR|NOT|EXOR|B_AND|B_OR|B_NOT|B_EXOR|MOD)\\b)"
+        },
+        {
+          "name": "support.function.math.krl",
+          "match": "(?i:\\b(?:ABS|ACOS|ASIN|ATAN2|COS|EXP|FRACT|ROUND|SIN|SQRT|TAN|TRUNC)(?=\\s*\\())"
+        }
+      ]
+    },
+    "ioCommands": {
+      "patterns": [
+        {
+          "name": "keyword.control.io.krl",
+          "match": "(?i:\\b(?:PULSE|TRIGGER|WHEN|DISTANCE|DELAY|PRIO|INTERRUPT|ON|OFF|BRAKE|RESUME)\\b)"
+        },
+        {
+          "name": "support.function.io.krl",
+          "match": "(?i:\\b(?:ANIN|ANOUT)(?=\\s+(?:ON|OFF)\\b))"
+        }
+      ]
+    },
+    "typeDefinitions": {
+      "patterns": [
+        {
+          "name": "storage.type.krl",
+          "match": "(?i:\\b(?:BOOL|CHAR|INT|REAL|ENUM|STRUC|SIGNAL|FRAME|POS|E6POS|AXIS|E6AXIS|FDAT|LDAT|PDAT|CPDAT|APO|TOOL|BASE)\\b)"
+        }
+      ]
+    },
+    "listFunctions": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.krl",
+          "match": "(?i:\\b(?:TRUE|FALSE)\\b)"
+        },
+        {
+          "name": "constant.other.enum.krl",
+          "match": "#[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "support.function.list.krl",
+          "match": "(?i:\\b(?:STRCLEAR|STRADD|STRCOPY|STRCUT|STRFIND|STRLEN|STRTOL|STRTOR|STRTOUPPER|STRTOLOWER)(?=\\s*\\())"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "variable.other.user.krl",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b(?!\\s*\\()"
+        }
+      ]
+    }
+  }
+}

@@ -2,8 +2,8 @@
   "name": "krl-helper",
   "displayName": "krl-helper",
   "description": "A VS Code extension to support Kuka Robot Language (KRL), showing functions in the outline.",
-  "version": "0.0.5",
-  "publisher": "Michael Neumann",
+  "version": "0.0.29",
+  "publisher": "MichaeINeumann",
   "engines": {
     "vscode": "^1.91.0"
   },
@@ -15,21 +15,217 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:krl"
+    "onStartupFinished",
+    "onLanguage:krl",
+    "onCommand:kukaFoldTools.convertSelection",
+    "onCommand:krlHelper.openColorSettings",
+    "onCommand:krlHelper.toggleLineComment"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "kukaFoldTools.convertSelection",
+        "title": "KRL-HELPER: Convert Selection to iiQKA Fold"
+      },
+      {
+        "command": "krlHelper.openColorSettings",
+        "title": "KRL-HELPER: Syntaxfarben einstellen"
+      },
+      {
+        "command": "krlHelper.toggleLineComment",
+        "title": "KRL-HELPER: Zeilenkommentar umschalten"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "krlHelper.toggleLineComment",
+        "key": "ctrl+/",
+        "when": "editorTextFocus && editorLangId == krl"
+      },
+      {
+        "command": "krlHelper.toggleLineComment",
+        "key": "ctrl+#",
+        "when": "editorTextFocus && editorLangId == krl"
+      },
+      {
+        "command": "krlHelper.toggleLineComment",
+        "key": "ctrl+[Backslash]",
+        "when": "editorTextFocus && editorLangId == krl"
+      }
+    ],
     "languages": [
       {
         "id": "krl",
-        "extensions": [".src", ".dat"],
-        "aliases": ["Kuka Robot Language", "KRL"]
+        "extensions": [
+          ".src",
+          ".dat",
+          ".sub"
+        ],
+        "aliases": [
+          "Kuka Robot Language",
+          "KRL"
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
+    "grammars": [
+      {
+        "language": "krl",
+        "scopeName": "source.krl",
+        "path": "./syntaxes/krl.tmLanguage.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[krl]": {
+        "editor.semanticHighlighting.enabled": false
+      }
+    },
     "configuration": {
       "type": "object",
-      "title": "KRL Outline",
-      "properties": {}
+      "title": "KRL Syntax Highlighting",
+      "properties": {
+        "krlHighlighting.applyCustomColors": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "order": 1,
+          "description": "Wendet die unten eingestellten Syntaxfarben auf KRL-Dateien an. Andere TextMate-Farbregeln bleiben erhalten."
+        },
+        "krlHighlighting.colors.normalText": {
+          "type": "string",
+          "default": "#C0C0C0",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 10,
+          "description": "Farbe für normalen KRL-Text."
+        },
+        "krlHighlighting.colors.comments": {
+          "type": "string",
+          "default": "#00FF00",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 11,
+          "description": "Farbe für mit Semikolon beginnende KRL-Kommentare."
+        },
+        "krlHighlighting.colors.blockComments": {
+          "type": "string",
+          "default": "#75715E",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 12,
+          "description": "Farbe für alternative Blockkommentare."
+        },
+        "krlHighlighting.colors.strings": {
+          "type": "string",
+          "default": "#FFFFFF",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 13,
+          "description": "Farbe für Zeichenketten."
+        },
+        "krlHighlighting.colors.numbers": {
+          "type": "string",
+          "default": "#AE81FF",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 14,
+          "description": "Farbe für Ganz- und Gleitkommazahlen."
+        },
+        "krlHighlighting.colors.programFlow": {
+          "type": "string",
+          "default": "#F92672",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 15,
+          "description": "Farbe für Programmfluss und Deklarationsschlüsselwörter."
+        },
+        "krlHighlighting.colors.controlStructures": {
+          "type": "string",
+          "default": "#F92672",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 16,
+          "description": "Farbe für Kontrollstrukturen wie THEN, ELSE, FOR, WHILE, CASE und RETURN."
+        },
+        "krlHighlighting.colors.ifKeyword": {
+          "type": "string",
+          "default": "#66D9EF",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 17,
+          "description": "Gemeinsame Farbe für IF, THEN, ELSE und ENDIF."
+        },
+        "krlHighlighting.colors.switchKeyword": {
+          "type": "string",
+          "default": "#AE81FF",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 18,
+          "description": "Gemeinsame Farbe für SWITCH, CASE, DEFAULT und ENDSWITCH."
+        },
+        "krlHighlighting.colors.doKeyword": {
+          "type": "string",
+          "default": "#FF8000",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 19,
+          "description": "Farbe für das Schlüsselwort DO."
+        },
+        "krlHighlighting.colors.waitKeyword": {
+          "type": "string",
+          "default": "#E8ED12",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 20,
+          "description": "Farbe für das Schlüsselwort WAIT."
+        },
+        "krlHighlighting.colors.variableNames": {
+          "type": "string",
+          "default": "#C0C0C0",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 21,
+          "description": "Farbe für KRL-Variablennamen."
+        },
+        "krlHighlighting.colors.setupCommands": {
+          "type": "string",
+          "default": "#FFC042",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 22,
+          "description": "Farbe für Initialisierungs- und Setup-Befehle."
+        },
+        "krlHighlighting.colors.motionCommands": {
+          "type": "string",
+          "default": "#FF8000",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 23,
+          "description": "Farbe für KRL-Bewegungsbefehle."
+        },
+        "krlHighlighting.colors.mathFunctions": {
+          "type": "string",
+          "default": "#FFC042",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 24,
+          "description": "Farbe für mathematische Operatoren und Funktionen."
+        },
+        "krlHighlighting.colors.ioCommands": {
+          "type": "string",
+          "default": "#FFC042",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 25,
+          "description": "Farbe für E/A-, Trigger- und Interrupt-Befehle."
+        },
+        "krlHighlighting.colors.typeDefinitions": {
+          "type": "string",
+          "default": "#FFC042",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 26,
+          "description": "Farbe für KRL-Datentypen."
+        },
+        "krlHighlighting.colors.systemVariables": {
+          "type": "string",
+          "default": "#E8ED12",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 27,
+          "description": "Farbe für Systemvariablen mit $-Präfix."
+        },
+        "krlHighlighting.colors.listFunctions": {
+          "type": "string",
+          "default": "#FFC042",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+          "order": 28,
+          "description": "Farbe für Aufzählungswerte, Wahrheitswerte sowie String- und Listenfunktionen."
+        }
+      }
     }
   },
   "scripts": {
@@ -37,15 +233,16 @@
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
-    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "watch:tsc": "node ./node_modules/typescript/bin/tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
+    "compile-tests": "node ./node_modules/typescript/bin/tsc -p . --outDir out",
+    "watch-tests": "node ./node_modules/typescript/bin/tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
-    "check-types": "tsc --noEmit",
-    "lint": "eslint src --ext ts",
+    "check-types": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "lint": "node ./node_modules/eslint/bin/eslint.js src --ext ts",
     "test": "vscode-test"
   },
+  "dependencies": {},
   "devDependencies": {
     "@types/vscode": "^1.91.0",
     "@types/mocha": "^10.0.7",
