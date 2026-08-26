@@ -56,11 +56,26 @@ const maxConfigCandidates = 50;
 const workspaceScanTtlMs = 5000;
 const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
 const ignoredIdentifiers = new Set([
-  'bool', 'bas', 'base', 'base_data', 'base_name', 'base_no', 'b_and', 'b_or',
-  'b_not', 'b_exor', 'not', 'true',
-  'false', 'if', 'then', 'else', 'endif', 'for', 'to', 'step', 'endfor',
-  'while', 'endwhile', 'repeat', 'until', 'switch', 'case', 'default',
-  'endswitch', 'return', 'def', 'deffct', 'defdat', 'end', 'brake', 'b', 'n'
+  'def', 'deffct', 'defdat', 'end', 'endfct', 'enddat', 'global', 'decl',
+  'const', 'ext', 'public', 'private', 'extern', 'static', 'in', 'out', 'inout',
+  'if', 'then', 'else', 'endif', 'switch', 'case', 'default', 'endswitch',
+  'do', 'wait', 'for', 'to', 'step', 'endfor', 'while', 'endwhile', 'repeat',
+  'until', 'loop', 'endloop', 'goto', 'return', 'exit', 'continue', 'halt',
+  'ptp', 'lin', 'circ', 'sptp', 'slin', 'scirc', 'spl', 'spline', 'endspline',
+  'ptp_rel', 'lin_rel', 'circ_rel', 'c_dis', 'c_vel', 'c_ori', 'c_ptp',
+  'c_cp', 'c_spl', 'c_apx', 'c_aps',
+  'pulse', 'trigger', 'when', 'distance', 'delay', 'prio', 'interrupt', 'on',
+  'off', 'brake', 'resume', 'anin', 'anout', 'sec',
+  'and', 'or', 'not', 'exor', 'b_and', 'b_or', 'b_not', 'b_exor', 'mod',
+  'bool', 'char', 'int', 'real', 'enum', 'struc', 'signal', 'frame', 'pos',
+  'e6pos', 'axis', 'e6axis', 'fdat', 'ldat', 'pdat', 'cpdat', 'apo', 'tool',
+  'base', 'base_data', 'base_name', 'base_no', 'true', 'false',
+  'bas', 'ini', 'set_cd_params', 'set_motionparamset', 'set_krlmsg',
+  'clear_krlmsg', 'set_krldlg', 'clear_krldlg', 'cwrite', 'cread', 'swrite',
+  'sread', 'swrite_ext', 'sread_ext', 'abs', 'acos', 'asin', 'atan2', 'cos',
+  'exp', 'fract', 'round', 'sin', 'sqrt', 'tan', 'trunc', 'strclear', 'stradd',
+  'strcopy', 'strcut', 'strfind', 'strlen', 'strtol', 'strtor', 'strtoupper',
+  'strtolower'
 ]);
 const inputAliasRegex = /\$IN\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]/gi;
 const outputAliasRegex = /\$OUT\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]/gi;
@@ -516,6 +531,7 @@ function findUndeclaredDiagnostics(
     const normalized = identifier.toLowerCase();
     const scope = classifyVariable(identifier, configuration);
     if (hasNonVariablePrefix(text, match.index) || isMemberAccess(text, match.index)
+        || isIoAliasOperand(text, match.index, match.index + identifier.length)
         || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
       continue;
     }
@@ -558,6 +574,35 @@ function isFunctionIdentifier(text: string, endOffset: number): boolean {
     offset += 1;
   }
   return text[offset] === '(';
+}
+
+function isIoAliasOperand(text: string, startOffset: number, endOffset: number): boolean {
+  let offset = endOffset;
+  while (offset < text.length && (text[offset] === ' ' || text[offset] === '\t')) {
+    offset += 1;
+  }
+  if (text[offset] !== ']') {
+    return false;
+  }
+
+  offset = startOffset - 1;
+  while (offset >= 0 && (text[offset] === ' ' || text[offset] === '\t')) {
+    offset -= 1;
+  }
+  if (text[offset] !== '[') {
+    return false;
+  }
+
+  offset -= 1;
+  while (offset >= 0 && (text[offset] === ' ' || text[offset] === '\t')) {
+    offset -= 1;
+  }
+  const systemNameEnd = offset + 1;
+  while (offset >= 0 && /[A-Za-z]/.test(text[offset])) {
+    offset -= 1;
+  }
+  const systemName = text.slice(offset + 1, systemNameEnd).toLowerCase();
+  return text[offset] === '$' && (systemName === 'in' || systemName === 'out');
 }
 
 function findCompanionDat(sourcePath: string): string | null {

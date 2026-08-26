@@ -136,12 +136,13 @@ export class KrlFunctionNavigationProvider implements vscode.HoverProvider, vsco
         moduleEntry: isModuleEntry(definition, document.uri)
       }));
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    if (!workspaceFolder) {
+    const projectRoot = inferKrlProjectRoot(document.uri) ?? workspaceFolder?.uri.fsPath;
+    if (!projectRoot) {
       return currentDefinitions;
     }
 
     const currentKey = uriKey(document.uri);
-    const projectDefinitions = await this.projectFunctions(workspaceFolder.uri.fsPath);
+    const projectDefinitions = await this.projectFunctions(projectRoot);
     const foreignGlobals = projectDefinitions.filter(definition => definition.sourceId !== currentKey);
     foreignGlobals.sort((left, right) => {
       const pathOrder = this.relativePath(left.uri).localeCompare(this.relativePath(right.uri));
@@ -239,6 +240,21 @@ function normalizePath(filePath: string): string {
 
 function uriKey(uri: vscode.Uri): string {
   return uri.scheme === 'file' ? normalizePath(uri.fsPath) : uri.toString();
+}
+
+function inferKrlProjectRoot(uri: vscode.Uri): string | undefined {
+  if (uri.scheme !== 'file') {
+    return undefined;
+  }
+  const parsedPath = path.parse(uri.fsPath);
+  const segments = path.relative(parsedPath.root, uri.fsPath).split(path.sep).filter(Boolean);
+  const krcIndex = segments.findIndex((segment, index) =>
+    segment.toLowerCase() === 'krc' && segments[index + 1]?.toLowerCase() === 'r1'
+  );
+  if (krcIndex === -1) {
+    return undefined;
+  }
+  return path.join(parsedPath.root, ...segments.slice(0, krcIndex + 2));
 }
 
 function positionForOffset(definition: IndexedKrlFunction, offset: number): vscode.Position {
