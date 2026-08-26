@@ -11,6 +11,7 @@ import {
 interface IndexedKrlFunction extends ParsedKrlFunction {
   uri: vscode.Uri;
   sourceId: string;
+  moduleEntry: boolean;
 }
 
 interface CachedProjectFunctions {
@@ -73,7 +74,7 @@ export class KrlFunctionNavigationProvider implements vscode.HoverProvider, vsco
       if (index > 0) {
         markdown.appendMarkdown('\n\n---\n\n');
       }
-      const visibility = definition.global ? 'Global' : 'Local';
+      const visibility = definition.global ? 'Global' : definition.moduleEntry ? 'Module' : 'Local';
       const location = `${this.relativePath(definition.uri)}:${definition.line + 1}`;
       markdown.appendMarkdown(`**${visibility}** — \`${escapeMarkdownCode(location)}\`\n\n`);
       markdown.appendCodeblock(definition.signature, 'krl');
@@ -128,7 +129,12 @@ export class KrlFunctionNavigationProvider implements vscode.HoverProvider, vsco
   ): Promise<IndexedKrlFunction[]> {
     const currentDefinitions = parseKrlFunctions(document.getText())
       .filter(definition => definition.normalizedName === normalizedName)
-      .map(definition => ({ ...definition, uri: document.uri, sourceId: uriKey(document.uri) }));
+      .map(definition => ({
+        ...definition,
+        uri: document.uri,
+        sourceId: uriKey(document.uri),
+        moduleEntry: isModuleEntry(definition, document.uri)
+      }));
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
     if (!workspaceFolder) {
       return currentDefinitions;
@@ -171,7 +177,8 @@ export class KrlFunctionNavigationProvider implements vscode.HoverProvider, vsco
       definitions.push(...parseKrlFunctions(text).map(definition => ({
         ...definition,
         uri,
-        sourceId: uriKey(uri)
+        sourceId: uriKey(uri),
+        moduleEntry: isModuleEntry(definition, uri)
       })));
     }
     return definitions;
@@ -241,4 +248,12 @@ function positionForOffset(definition: IndexedKrlFunction, offset: number): vsco
 
 function escapeMarkdownCode(value: string): string {
   return value.replace(/`/g, '\\`');
+}
+
+function isModuleEntry(definition: ParsedKrlFunction, uri: vscode.Uri): boolean {
+  if (uri.scheme !== 'file') {
+    return false;
+  }
+  const moduleName = path.basename(uri.fsPath, path.extname(uri.fsPath)).toLowerCase();
+  return definition.normalizedName === moduleName;
 }

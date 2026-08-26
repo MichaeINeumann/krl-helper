@@ -5,6 +5,7 @@ import { toggleKrlLineComments } from './commentToggle';
 import { convertSelectionToIiqkaFold } from './foldConversion';
 import { FunctionSymbolProvider } from './functionSymbolProvider';
 import { initializeFunctionNavigation } from './functionNavigation';
+import { initializeVariableNavigation } from './variableNavigation';
 
 const krlDocumentSelector: vscode.DocumentSelector = [
   { language: 'krl', scheme: 'file' },
@@ -21,6 +22,7 @@ export function activate(context: vscode.ExtensionContext): void {
   initializeColorSettings(context);
   initializeDiagnostics(context);
   initializeFunctionNavigation(context, krlDocumentSelector);
+  initializeVariableNavigation(context, krlDocumentSelector);
 }
 
 export function deactivate(): void {

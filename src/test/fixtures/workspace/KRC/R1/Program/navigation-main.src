@@ -4,4 +4,6 @@ DEF NavigationMain()
   sharedroutine(1)
   ForeignGlobalOnly()
   ForeignPrivateOnly()
+  r_mvHome()
+  HomeInternalOnly()
 END

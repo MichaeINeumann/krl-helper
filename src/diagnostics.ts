@@ -196,7 +196,7 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
     }
   }
 
-  const prefixConfiguration = readPrefixConfiguration(document.uri);
+  const prefixConfiguration = readPrefixConfiguration();
   const sanitizedText = sanitizeForAnalysis(sourceText);
   const diagnostics: vscode.Diagnostic[] = [
     ...findIoAliasDiagnostics(sanitizedText, document, configuredAliases, prefixConfiguration),
@@ -205,8 +205,8 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
   diagnosticCollection?.set(document.uri, diagnostics);
 }
 
-function readPrefixConfiguration(resource: vscode.Uri): DiagnosticPrefixConfiguration {
-  const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics', resource);
+function readPrefixConfiguration(): DiagnosticPrefixConfiguration {
+  const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics');
   const rawValues = Object.fromEntries(diagnosticSettingDefinitions.map(definition => [
     definition.key,
     configuration.get<unknown>(definition.key, [...definition.defaultValue])

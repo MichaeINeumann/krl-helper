@@ -32,10 +32,19 @@ suite('KRL diagnostic model', () => {
   });
 
   test('collects module declarations and function parameters case-insensitively', () => {
-    const names = collectDeclarations('DECL BOOL bPart\nDECL MY_TYPE nCount\nDECL GLOBAL INT b_Shared\nDECL INT values[nMissing]');
+    const names = collectDeclarations([
+      'DECL BOOL bPart',
+      'DECL MY_TYPE nCount',
+      'DECL GLOBAL INT b_Shared',
+      'DECL INT values[nMissing]',
+      'REAL nTolAxe'
+    ].join('\n'));
     collectFunctionParameters('DEF Run(IN BOOL bReady, INT nIndex)', names);
 
-    assert.deepStrictEqual([...names].sort(), ['b_shared', 'bpart', 'bready', 'ncount', 'nindex', 'values']);
+    assert.deepStrictEqual(
+      [...names].sort(),
+      ['b_shared', 'bpart', 'bready', 'ncount', 'nindex', 'ntolaxe', 'values']
+    );
     assert.ok(!names.has('nmissing'));
   });
 

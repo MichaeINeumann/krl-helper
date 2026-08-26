@@ -7,7 +7,7 @@ KRL Helper is a Visual Studio Code extension providing language support and prod
 - Syntax highlighting for `.src`, `.dat`, and `.sub` files.
 - Separate, configurable syntax-color palettes for dark and light themes.
 - Shared function parsing for local and global `DEF` and `DEFFCT` declarations.
-- Document Outline, function hover, and **Go to Definition** for project routines.
+- Document Outline, function hover, and **Go to Definition** for project routines and variables.
 - Conversion of selected `PTP`, `LIN`, `SPTP`, and `SLIN` motion blocks into iiQKA-style folds.
 - Line comments using `;`, including the standard VS Code **Toggle Line Comment** command and dedicated KRL Helper shortcuts.
 - Configurable diagnostics for local variables, global variables, and `$IN[...]` / `$OUT[...]` aliases.
@@ -36,7 +36,7 @@ You can also use **Extensions: Install from VSIX...** from the Command Palette.
 
 Open a `.src`, `.dat`, or `.sub` file. Visual Studio Code automatically selects the KRL language mode.
 
-The Outline view lists supported routine declarations. Hovering a user-defined function call shows its complete declaration, visibility, relative file path, and line number. **Go to Definition** returns all visible matches, with declarations in the current document first.
+The Outline view lists supported routine declarations. Hovering a user-defined function call shows its complete declaration, visibility, relative file path, and line number. **Go to Definition** returns all visible function or variable declarations, with declarations in the current document first.
 
 For example:
 
@@ -111,9 +111,11 @@ Local declarations are taken from the current `.src` or `.sub`, its function par
 
 The diagnostics check declaration existence and visibility. They do not yet validate whether a prefix agrees with the declared KRL data type.
 
-### Function navigation
+### Function and variable navigation
 
-Function lookup is case-insensitive and supports `DEF`, `GLOBAL DEF`, `DEFFCT`, and `GLOBAL DEFFCT`. All functions in the current document are visible; only global functions are visible from other `.src` and `.sub` files. Comments, known KRL built-ins, and unresolved calls produce no navigation result. The project index uses unsaved open documents and refreshes after file, editor, configuration, and workspace changes.
+Function lookup is case-insensitive and supports `DEF`, `GLOBAL DEF`, `DEFFCT`, and `GLOBAL DEFFCT`. All functions in the current document are visible. From another `.src` or `.sub`, explicit global routines and the module entry routine whose name matches the source filename are visible. Other local helper routines remain private. Comments, known KRL built-ins, and unresolved calls produce no navigation result.
+
+Variable **Go to Definition** follows the same visibility rules as diagnostics: current source declarations and parameters, the same-named companion DAT, `$config.dat`, public `DECL GLOBAL` DAT declarations, and explicit global source declarations. Prefix-classified global variables never fall back to a same-named local declaration. Both project indexes use unsaved open documents and refresh after file, editor, configuration, and workspace changes.
 
 ## Limitations
 

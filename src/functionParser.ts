@@ -25,6 +25,7 @@ export interface KrlFunctionCall {
 
 export interface SourcedKrlFunction extends ParsedKrlFunction {
   sourceId: string;
+  moduleEntry?: boolean;
 }
 
 export const krlBuiltInFunctions = new Set([
@@ -122,7 +123,9 @@ export function selectVisibleKrlFunctions<T extends SourcedKrlFunction>(
   const matching = definitions.filter(definition => definition.normalizedName === normalizedName);
   return [
     ...matching.filter(definition => definition.sourceId === currentSourceId),
-    ...matching.filter(definition => definition.sourceId !== currentSourceId && definition.global)
+    ...matching.filter(definition =>
+      definition.sourceId !== currentSourceId && (definition.global || definition.moduleEntry)
+    )
   ];
 }
 

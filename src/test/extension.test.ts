@@ -161,7 +161,10 @@ suite('KRL Helper', () => {
     for (const missingName of ['b_LocalOnlyGlobal', 'b_Private', 'b_PublicNonGlobal', 'i_Missing', 'o_Missing']) {
       assert.ok(messages.some(message => message.includes(`'${missingName}'`)), `${missingName} should be reported`);
     }
-    for (const visibleName of ['bLocalOk', 'bCompanion', 'nParam', 'b_Config', 'b_Public', 'n_SourceGlobal', 'i_Configured']) {
+    for (const visibleName of [
+      'bLocalOk', 'nTolerance', 'bCompanion', 'nParam', 'b_Config', 'b_Public',
+      'n_SourceGlobal', 'i_Configured'
+    ]) {
       assert.ok(!messages.some(message => message.includes(`'${visibleName}'`)), `${visibleName} should be visible`);
     }
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
@@ -203,6 +206,67 @@ suite('KRL Helper', () => {
       'vscode.executeDefinitionProvider', uri, privatePosition
     );
     assert.ok(!privateDefinitions || privateDefinitions.length === 0);
+
+    const modulePosition = document.positionAt(document.getText().indexOf('r_mvHome'));
+    const moduleDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+      'vscode.executeDefinitionProvider', uri, modulePosition
+    );
+    const moduleHovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+      'vscode.executeHoverProvider', uri, modulePosition
+    );
+    const moduleHoverText = moduleHovers.flatMap(hover => hover.contents)
+      .map(content => typeof content === 'string' ? content : content.value)
+      .join('\n');
+    assert.strictEqual(moduleDefinitions.length, 1);
+    assert.ok(moduleDefinitions[0].uri.path.endsWith('/r_mvhome.src'));
+    assert.ok(moduleHoverText.includes('**Module**'));
+    assert.ok(moduleHoverText.includes('DEF r_mvHome(bnHalt :IN)'));
+
+    const internalPosition = document.positionAt(document.getText().indexOf('HomeInternalOnly'));
+    const internalDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+      'vscode.executeDefinitionProvider', uri, internalPosition
+    );
+    assert.ok(!internalDefinitions || internalDefinitions.length === 0);
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  });
+
+  test('resolves visible local, companion DAT, parameter, and project variables', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const uri = vscode.Uri.joinPath(
+      workspaceFolder.uri, 'KRC', 'R1', 'Program', 'diagnostic-visibility.src'
+    );
+    const document = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(document);
+
+    const expectedDefinitions = [
+      { name: 'bLocalOk', suffix: '/diagnostic-visibility.src', line: 1 },
+      { name: 'nTolerance', suffix: '/diagnostic-visibility.src', line: 2 },
+      { name: 'bCompanion', suffix: '/diagnostic-visibility.dat', line: 1 },
+      { name: 'nParam', suffix: '/diagnostic-visibility.src', line: 0 },
+      { name: 'b_Config', suffix: '/System/$config.dat', line: 1 },
+      { name: 'b_Public', suffix: '/shared.dat', line: 1 },
+      { name: 'n_SourceGlobal', suffix: '/navigation-library.src', line: 0 },
+      { name: 'i_Configured', suffix: '/System/$config.dat', line: 2 }
+    ];
+    for (const expected of expectedDefinitions) {
+      const position = document.positionAt(lastIdentifierOffset(document.getText(), expected.name));
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', uri, position
+      );
+      assert.ok(definitions.length > 0, `${expected.name} should have a definition`);
+      assert.ok(definitions.some(definition =>
+        definition.uri.path.endsWith(expected.suffix) && definition.range.start.line === expected.line
+      ), `${expected.name} should resolve to ${expected.suffix}:${expected.line + 1}`);
+    }
+
+    for (const name of ['b_LocalOnlyGlobal', 'b_Private', 'b_PublicNonGlobal']) {
+      const position = document.positionAt(lastIdentifierOffset(document.getText(), name));
+      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider', uri, position
+      );
+      assert.ok(!definitions || definitions.length === 0, `${name} should not resolve outside its scope`);
+    }
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
   });
 
@@ -253,4 +317,9 @@ async function waitForDiagnosticCondition(
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   return vscode.languages.getDiagnostics(uri);
+}
+
+function lastIdentifierOffset(text: string, identifier: string): number {
+  const matches = [...text.matchAll(new RegExp(`\\b${identifier}\\b`, 'g'))];
+  return matches.at(-1)?.index ?? -1;
 }
