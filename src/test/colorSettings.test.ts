@@ -7,6 +7,7 @@ import {
   managedConfigurationLayer,
   persistPalettes,
   removeAllHelperColors,
+  restoreWorkspaceCustomizationEdits,
   TextMateRule,
   themePaletteTargets,
   themeSelectorForKind,
@@ -174,6 +175,26 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(helperRulesAt(disabled, '[Dark Test Theme]').length, 0);
   });
 
+  test('restores workspace rules after removing a generated mask and preserves later edits', () => {
+    const originalRule: TextMateRule = { scope: 'source.workspace', settings: { foreground: '#123456' } };
+    const globalRule: TextMateRule = { scope: 'source.other', settings: { foreground: '#654321' } };
+    const laterRule: TextMateRule = { scope: 'source.added', settings: { foreground: '#ABCDEF' } };
+    const original: TokenColorCustomizations = { textMateRules: [originalRule] };
+    const managed: TokenColorCustomizations = {
+      textMateRules: [originalRule],
+      '[Dark Test Theme]': { textMateRules: [globalRule] }
+    };
+    const current: TokenColorCustomizations = {
+      ...managed,
+      textMateRules: [originalRule, laterRule]
+    };
+
+    const restored = restoreWorkspaceCustomizationEdits(original, managed, current);
+
+    assert.deepStrictEqual(rulesAt(restored), [originalRule, laterRule]);
+    assert.strictEqual(restored['[Dark Test Theme]'], undefined);
+  });
+
   test('synchronizing the same theme repeatedly is idempotent', () => {
     const firstUpdate = updateCustomizationValue({}, true, '[Light Test Theme]', 'light');
     const secondUpdate = updateCustomizationValue(firstUpdate, true, '[Light Test Theme]', 'light');
@@ -265,6 +286,25 @@ suite('KRL syntax color configuration', () => {
       assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#123456');
     } finally {
       await configuration.update('palettes', previousValue, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('keeps explicit native per-color settings effective for the dark palette', async () => {
+    const paletteConfiguration = vscode.workspace.getConfiguration('krlHighlighting');
+    const colorConfiguration = vscode.workspace.getConfiguration('krlHighlighting.colors');
+    const previousPalettes = paletteConfiguration.inspect<CompletePalettes>('palettes')?.globalValue;
+    const previousColor = colorConfiguration.inspect<string>('comments')?.globalValue;
+
+    try {
+      await paletteConfiguration.update('palettes', completePalettes('#112233'), vscode.ConfigurationTarget.Global);
+      await colorConfiguration.update('comments', '#ABCDEF', vscode.ConfigurationTarget.Global);
+      const updated = updateCustomizationValue({}, true, '[Dark Test Theme]', 'dark');
+
+      assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Comments'), '#ABCDEF');
+      assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#112233');
+    } finally {
+      await colorConfiguration.update('comments', previousColor, vscode.ConfigurationTarget.Global);
+      await paletteConfiguration.update('palettes', previousPalettes, vscode.ConfigurationTarget.Global);
     }
   });
 
@@ -374,6 +414,7 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('dirtyColorKeys.has(colorControlKey(input))'));
     assert.ok(html.includes('Unsaved color edits were preserved.'));
     assert.ok(html.includes('setColorControlsDisabled(true)'));
+    assert.ok(html.includes("event.data.message || 'Colors applied.'"));
     assert.ok(html.includes('for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;'));
     assert.ok(html.includes("setStatus('Default colors loaded for the ' + selectedPanel + ' theme. Apply Colors to save.');"));
     assert.ok(!html.includes("vscode.postMessage({ type: 'reset', palette: selectedPanel })"));
