@@ -135,7 +135,7 @@ suite('KRL syntax color configuration', () => {
     assert.deepStrictEqual(updateCustomizationTargets(reconciled, true, secondWindowTargets), reconciled);
   });
 
-  test('stores managed colors in the workspace layer when a workspace is open', () => {
+  test('keeps managed colors in the User layer for workspaces without an explicit override', () => {
     const globalValue = updateCustomizationTargets({}, true, [
       { selector: '[Global Theme]', palette: 'dark' }
     ]);
@@ -144,11 +144,34 @@ suite('KRL syntax color configuration', () => {
     };
 
     const layer = managedConfigurationLayer({ globalValue, workspaceValue }, true);
+
+    assert.strictEqual(layer.target, vscode.ConfigurationTarget.Global);
+    assert.deepStrictEqual(layer.value, globalValue);
+  });
+
+  test('masks inherited User helper rules for an explicit workspace opt-out', () => {
+    const globalThemeRule: TextMateRule = {
+      scope: 'source.other',
+      settings: { foreground: '#654321' }
+    };
+    const workspaceRule: TextMateRule = {
+      scope: 'source.workspace',
+      settings: { foreground: '#123456' }
+    };
+    const globalValue: TokenColorCustomizations = {
+      '[Dark Test Theme]': {
+        textMateRules: [globalThemeRule, helperRule('Regular text', '#C0C0C0')]
+      }
+    };
+    const workspaceValue: TokenColorCustomizations = { textMateRules: [workspaceRule] };
+
+    const layer = managedConfigurationLayer({ globalValue, workspaceValue }, true, false);
     const disabled = updateCustomizationTargets(layer.value, false, []);
 
     assert.strictEqual(layer.target, vscode.ConfigurationTarget.Workspace);
-    assert.deepStrictEqual(layer.value, workspaceValue);
-    assert.strictEqual(helperRulesAt(disabled).length, 0);
+    assert.deepStrictEqual(rulesAt(disabled), [workspaceRule]);
+    assert.deepStrictEqual(rulesAt(disabled, '[Dark Test Theme]'), [globalThemeRule]);
+    assert.strictEqual(helperRulesAt(disabled, '[Dark Test Theme]').length, 0);
   });
 
   test('synchronizing the same theme repeatedly is idempotent', () => {
@@ -350,10 +373,13 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('const dirtyColorKeys = new Set()'));
     assert.ok(html.includes('dirtyColorKeys.has(colorControlKey(input))'));
     assert.ok(html.includes('Unsaved color edits were preserved.'));
+    assert.ok(html.includes('setColorControlsDisabled(true)'));
+    assert.ok(html.includes('for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;'));
+    assert.ok(html.includes("setStatus('Default colors loaded for the ' + selectedPanel + ' theme. Apply Colors to save.');"));
+    assert.ok(!html.includes("vscode.postMessage({ type: 'reset', palette: selectedPanel })"));
     assert.ok(html.includes('data-key="localVariablePrefixes"'));
     assert.ok(html.includes('<option value="user"'));
     assert.ok(html.includes('<option value="workspace"'));
-    assert.ok(html.includes("type: 'reset', palette: selectedPanel"));
     assert.ok(html.includes("type: 'diagnosticReset'"));
     const script = /<script nonce="[^"]+">([\s\S]+)<\/script>/.exec(html)?.[1];
     assert.ok(script);

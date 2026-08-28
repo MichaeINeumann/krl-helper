@@ -255,13 +255,6 @@ function configuredColor(definition: ColorDefinition, palette: PaletteName = act
   return colorPattern.test(value) ? value : fallback;
 }
 
-function defaultColors(palette: PaletteName): Record<string, string> {
-  return Object.fromEntries(colorDefinitions.map(definition => [
-    definition.key,
-    palette === 'light' ? definition.lightFallback : definition.darkFallback
-  ]));
-}
-
 function paletteSettingsView(): CompletePalettes {
   return {
     dark: Object.fromEntries(colorDefinitions.map(definition => [
@@ -301,10 +294,24 @@ export async function synchronizeTokenColors(): Promise<void> {
   const inspected = editorConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations');
   const hasWorkspace = vscode.workspace.workspaceFile !== undefined
     || (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
-  const layer = managedConfigurationLayer(inspected, hasWorkspace);
-  const enabled = vscode.workspace.getConfiguration('krlHighlighting').get<boolean>('applyCustomColors', true);
+  const highlightingConfiguration = vscode.workspace.getConfiguration('krlHighlighting');
+  const workspacePreference = hasWorkspace
+    ? highlightingConfiguration.inspect<boolean>('applyCustomColors')?.workspaceValue
+    : undefined;
+  const layer = managedConfigurationLayer(inspected, hasWorkspace, workspacePreference);
+  const enabled = highlightingConfiguration.get<boolean>('applyCustomColors', true);
   const nextValue = updateCustomizationTargets(layer.value, enabled, configuredThemeTargets());
 
+  if (hasWorkspace && workspacePreference === undefined && inspected?.workspaceValue) {
+    const cleanedWorkspaceValue = removeAllHelperColors(inspected.workspaceValue);
+    if (JSON.stringify(inspected.workspaceValue) !== JSON.stringify(cleanedWorkspaceValue)) {
+      await editorConfiguration.update(
+        'tokenColorCustomizations',
+        cleanedWorkspaceValue,
+        vscode.ConfigurationTarget.Workspace
+      );
+    }
+  }
   if (JSON.stringify(layer.value) !== JSON.stringify(nextValue)) {
     await editorConfiguration.update(
       'tokenColorCustomizations',
@@ -327,18 +334,38 @@ export interface InspectedTokenColors {
 
 export function managedConfigurationLayer(
   inspected: InspectedTokenColors | undefined,
-  hasWorkspace: boolean
+  hasWorkspace: boolean,
+  workspacePreference?: boolean
 ): ConfigurationLayer {
-  if (hasWorkspace) {
-    const workspaceValue = inspected?.workspaceValue && typeof inspected.workspaceValue === 'object'
-      ? inspected.workspaceValue
-      : {};
-    return { target: vscode.ConfigurationTarget.Workspace, value: workspaceValue };
-  }
   const globalValue = inspected?.globalValue && typeof inspected.globalValue === 'object'
     ? inspected.globalValue
     : {};
+  if (hasWorkspace && workspacePreference !== undefined) {
+    const workspaceValue = inspected?.workspaceValue && typeof inspected.workspaceValue === 'object'
+      ? inspected.workspaceValue
+      : {};
+    return {
+      target: vscode.ConfigurationTarget.Workspace,
+      value: mergeCustomizationLayers(globalValue, workspaceValue)
+    };
+  }
   return { target: vscode.ConfigurationTarget.Global, value: globalValue };
+}
+
+function mergeCustomizationLayers(
+  globalValue: TokenColorCustomizations,
+  workspaceValue: TokenColorCustomizations
+): TokenColorCustomizations {
+  const merged: TokenColorCustomizations = { ...globalValue, ...workspaceValue };
+  for (const key of Object.keys(globalValue)) {
+    const globalEntry = globalValue[key];
+    const workspaceEntry = workspaceValue[key];
+    if (globalEntry && typeof globalEntry === 'object' && !Array.isArray(globalEntry)
+      && workspaceEntry && typeof workspaceEntry === 'object' && !Array.isArray(workspaceEntry)) {
+      merged[key] = { ...globalEntry, ...workspaceEntry };
+    }
+  }
+  return merged;
 }
 
 function rulesWithoutHelperColors(rules: unknown): TextMateRule[] {
@@ -540,23 +567,16 @@ async function reconcileExternalTokenColorChange(): Promise<void> {
     { target: vscode.ConfigurationTarget.Workspace, value: inspected?.workspaceValue },
     { target: vscode.ConfigurationTarget.WorkspaceFolder, value: inspected?.workspaceFolderValue }
   ];
-  let removedTopLevelRules = false;
-
   for (const layer of layers) {
     if (!hasTopLevelHelperColors(layer.value)) {
       continue;
     }
-    removedTopLevelRules = true;
     await editorConfiguration.update('tokenColorCustomizations', {
       ...layer.value,
       textMateRules: rulesWithoutHelperColors(layer.value?.textMateRules)
     }, layer.target);
   }
-
-  const enabled = vscode.workspace.getConfiguration('krlHighlighting').get<boolean>('applyCustomColors', true);
-  if (removedTopLevelRules || enabled) {
-    await synchronizeTokenColors();
-  }
+  await synchronizeTokenColors();
 }
 
 async function migrateLegacyHelperRules(context: vscode.ExtensionContext): Promise<void> {
@@ -789,6 +809,7 @@ export function colorSettingsHtml(
     const colorPickers = [...document.querySelectorAll('[data-color-picker]')];
     const diagnosticCards = [...document.querySelectorAll('[data-diagnostic-card]')];
     const dirtyColorKeys = new Set();
+    let colorSavePending = false;
     let diagnosticState = ${serializeForScript(diagnostics)};
     let selectedPanel = '${initialPalette}';
 
@@ -821,6 +842,13 @@ export function colorSettingsHtml(
 
     function colorControlKey(control) {
       return control.dataset.palette + '.' + control.dataset.key;
+    }
+
+    function setColorControlsDisabled(disabled) {
+      colorSavePending = disabled;
+      for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;
+      document.getElementById('save').disabled = disabled;
+      document.getElementById('reset').disabled = disabled;
     }
 
     function renderPaletteColors(colors) {
@@ -923,6 +951,7 @@ export function colorSettingsHtml(
       renderDiagnosticCard(card);
     }
     document.getElementById('save').addEventListener('click', () => {
+      if (colorSavePending) return;
       const invalidInputs = colorInputs.filter(input => !validateColorInput(input));
       if (invalidInputs.length > 0) {
         setStatus('Correct the invalid hexadecimal color values before applying the palettes.', true);
@@ -931,26 +960,28 @@ export function colorSettingsHtml(
       }
       const colors = { dark: {}, light: {} };
       for (const input of colorInputs) colors[input.dataset.palette][input.dataset.key] = input.value.trim().toUpperCase();
+      setColorControlsDisabled(true);
+      setStatus('Applying colors...');
       vscode.postMessage({ type: 'save', colors });
     });
     document.getElementById('reset').addEventListener('click', () => {
-      vscode.postMessage({ type: 'reset', palette: selectedPanel });
+      if (colorSavePending || !paletteNames.includes(selectedPanel)) return;
+      for (const input of colorInputs.filter(candidate => candidate.dataset.palette === selectedPanel)) {
+        input.value = input.dataset.default;
+        matchingColorControl(colorPickers, input).value = pickerColor(input.value);
+        validateColorInput(input);
+        dirtyColorKeys.add(colorControlKey(input));
+      }
+      setStatus('Default colors loaded for the ' + selectedPanel + ' theme. Apply Colors to save.');
     });
     window.addEventListener('message', event => {
       if (event.data && event.data.type === 'saved') {
         dirtyColorKeys.clear();
+        setColorControlsDisabled(false);
         setStatus('Colors applied.');
       } else if (event.data && event.data.type === 'saveError') {
+        setColorControlsDisabled(false);
         setStatus(event.data.message || 'The palettes contain an invalid hexadecimal color.', true);
-      } else if (event.data && event.data.type === 'reset' && paletteNames.includes(event.data.palette)) {
-        for (const input of colorInputs.filter(candidate => candidate.dataset.palette === event.data.palette)) {
-          const value = event.data.colors[input.dataset.key] || input.dataset.default;
-          input.value = value;
-          matchingColorControl(colorPickers, input).value = pickerColor(value);
-          validateColorInput(input);
-          dirtyColorKeys.delete(colorControlKey(input));
-        }
-        setStatus('Default colors restored for the ' + event.data.palette + ' theme.');
       } else if (event.data && event.data.type === 'palettesState') {
         const preservedDirtyFields = renderPaletteColors(event.data.colors);
         const message = event.data.message || 'Palettes refreshed from User Settings.';
@@ -1011,24 +1042,6 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
         return;
       }
       await colorPanel?.webview.postMessage({ type: 'saved' });
-    } else if (message?.type === 'reset' && (message.palette === 'dark' || message.palette === 'light')) {
-      const palette = message.palette as PaletteName;
-      const colors = defaultColors(palette);
-      let palettePersisted = false;
-      try {
-        await queueColorUpdate(async () => {
-          await persistPalettes({ ...paletteSettingsView(), [palette]: colors });
-          palettePersisted = true;
-          await synchronizeTokenColors();
-        });
-      } catch {
-        const message = palettePersisted
-          ? `The ${palette} palette was reset, but the syntax colors could not be applied. Retry or reload VS Code.`
-          : `The ${palette} palette could not be reset in User Settings.`;
-        await colorPanel?.webview.postMessage({ type: 'saveError', message });
-        return;
-      }
-      await colorPanel?.webview.postMessage({ type: 'reset', palette, colors });
     } else if (message?.type === 'diagnosticUpdate' || message?.type === 'diagnosticReset') {
       const definition = diagnosticSettingDefinitions.find(candidate => candidate.key === message.key);
       const scope = message.scope === 'workspace' ? 'workspace' : message.scope === 'user' ? 'user' : undefined;
