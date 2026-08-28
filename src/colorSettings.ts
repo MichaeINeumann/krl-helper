@@ -8,6 +8,7 @@ import {
 const rulePrefix = 'KRL Helper: ';
 const storageKey = 'krlHelper.syntaxColors';
 const deterministicMigrationKey = 'krlHelper.syntaxColorsDeterministic.v4';
+const paletteMigrationKey = 'krlHelper.syntaxColorsConfiguration.v1';
 const colorPattern = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 type TextMateScope = string | readonly string[];
@@ -66,6 +67,11 @@ interface StoredPalettes {
   light?: Record<string, string>;
 }
 
+interface CompletePalettes {
+  dark: Record<string, string>;
+  light: Record<string, string>;
+}
+
 function activePalette(): PaletteName {
   const kind = vscode.window.activeColorTheme.kind;
   return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight
@@ -73,25 +79,72 @@ function activePalette(): PaletteName {
     : 'dark';
 }
 
-function storedColors(palette: PaletteName): Record<string, string> {
+function legacyStoredColors(palette: PaletteName): Record<string, string> {
   const value = extensionContext?.globalState.get<StoredPalettes | Record<string, string>>(storageKey, {}) ?? {};
   if ('dark' in value || 'light' in value) {
     const paletteValue = (value as StoredPalettes)[palette];
-    return paletteValue && typeof paletteValue === 'object' ? paletteValue : {};
+    return validColors(paletteValue);
   }
-  return palette === 'dark' ? value as Record<string, string> : {};
+  return palette === 'dark' ? validColors(value) : {};
 }
 
-function storedPalettes(): StoredPalettes {
-  const value = extensionContext?.globalState.get<StoredPalettes | Record<string, string>>(storageKey, {}) ?? {};
-  if ('dark' in value || 'light' in value) {
-    const stored = value as StoredPalettes;
-    return {
-      dark: stored.dark && typeof stored.dark === 'object' ? { ...stored.dark } : {},
-      light: stored.light && typeof stored.light === 'object' ? { ...stored.light } : {}
-    };
+function validColors(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
   }
-  return { dark: { ...value as Record<string, string> }, light: {} };
+
+  const colors: Record<string, string> = {};
+  for (const definition of colorDefinitions) {
+    const color = (value as Record<string, unknown>)[definition.key];
+    if (typeof color === 'string' && colorPattern.test(color)) {
+      colors[definition.key] = color.toUpperCase();
+    }
+  }
+  return colors;
+}
+
+function configuredPaletteColors(palette: PaletteName): Record<string, string> {
+  const configured = vscode.workspace
+    .getConfiguration('krlHighlighting.palettes')
+    .get<unknown>(palette, {});
+  return validColors(configured);
+}
+
+function storedColors(palette: PaletteName): Record<string, string> {
+  const migrationComplete = extensionContext?.globalState.get<boolean>(paletteMigrationKey, false) ?? false;
+  return {
+    ...(migrationComplete ? {} : legacyStoredColors(palette)),
+    ...configuredPaletteColors(palette)
+  };
+}
+
+export function validateSubmittedPalettes(value: unknown): CompletePalettes | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const palettes = value as Record<string, unknown>;
+  const normalized: CompletePalettes = { dark: {}, light: {} };
+  for (const palette of ['dark', 'light'] as const) {
+    const paletteValue = palettes[palette];
+    if (!paletteValue || typeof paletteValue !== 'object' || Array.isArray(paletteValue)) {
+      return undefined;
+    }
+    for (const definition of colorDefinitions) {
+      const color = (paletteValue as Record<string, unknown>)[definition.key];
+      if (typeof color !== 'string' || !colorPattern.test(color.trim())) {
+        return undefined;
+      }
+      normalized[palette][definition.key] = color.trim().toUpperCase();
+    }
+  }
+  return normalized;
+}
+
+async function persistPalettes(palettes: CompletePalettes): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
+  await configuration.update('dark', palettes.dark, vscode.ConfigurationTarget.Global);
+  await configuration.update('light', palettes.light, vscode.ConfigurationTarget.Global);
 }
 
 function configuredColor(definition: ColorDefinition, palette: PaletteName = activePalette()): string {
@@ -197,18 +250,15 @@ export function updateCustomizationValue(
   themeSelector = activeThemeSelector(),
   palette: PaletteName = activePalette()
 ): TokenColorCustomizations {
-  const nextValue: TokenColorCustomizations = { ...removeAllHelperColors(currentValue) };
-
   if (!enabled) {
-    return nextValue;
+    return removeAllHelperColors(currentValue);
   }
 
   const activeRules = buildRules(palette);
-  nextValue.textMateRules = [
-    ...rulesWithoutHelperColors(nextValue.textMateRules),
-    ...activeRules
-  ];
   if (themeSelector) {
+    const nextValue: TokenColorCustomizations = {
+      ...removeConflictingHelperColors(currentValue, themeSelector)
+    };
     const currentThemeValue = nextValue[themeSelector] && typeof nextValue[themeSelector] === 'object'
       ? nextValue[themeSelector] as TokenColorCustomizations
       : {};
@@ -219,6 +269,45 @@ export function updateCustomizationValue(
         ...activeRules
       ]
     };
+    return nextValue;
+  }
+
+  const nextValue: TokenColorCustomizations = { ...removeAllHelperColors(currentValue) };
+  nextValue.textMateRules = [
+    ...rulesWithoutHelperColors(nextValue.textMateRules),
+    ...activeRules
+  ];
+  return nextValue;
+}
+
+function removeConflictingHelperColors(
+  currentValue: TokenColorCustomizations,
+  activeSelector: string
+): TokenColorCustomizations {
+  let nextValue = currentValue;
+  if (Array.isArray(currentValue.textMateRules) && currentValue.textMateRules.some(isKrlRule)) {
+    nextValue = {
+      ...nextValue,
+      textMateRules: rulesWithoutHelperColors(currentValue.textMateRules)
+    };
+  }
+
+  for (const [key, value] of Object.entries(currentValue)) {
+    if (!/^\[.+\]$/.test(key) || !value || typeof value !== 'object') {
+      continue;
+    }
+    const themeValue = value as TokenColorCustomizations;
+    const hasHelperRules = Array.isArray(themeValue.textMateRules) && themeValue.textMateRules.some(isKrlRule);
+    const themeCount = key.match(/\[[^\]]+\]/g)?.length ?? 0;
+    if (hasHelperRules && (key === activeSelector || themeCount !== 1)) {
+      if (nextValue === currentValue) {
+        nextValue = { ...currentValue };
+      }
+      nextValue[key] = {
+        ...themeValue,
+        textMateRules: rulesWithoutHelperColors(themeValue.textMateRules)
+      };
+    }
   }
   return nextValue;
 }
@@ -291,8 +380,25 @@ async function migrateLegacyHelperRules(context: vscode.ExtensionContext): Promi
   await context.globalState.update(deterministicMigrationKey, true);
 }
 
+async function migrateLegacyPalettes(context: vscode.ExtensionContext): Promise<void> {
+  if (context.globalState.get<boolean>(paletteMigrationKey, false)) {
+    return;
+  }
+
+  const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
+  for (const palette of ['dark', 'light'] as const) {
+    const legacyColors = legacyStoredColors(palette);
+    const globalValue = configuration.inspect<unknown>(palette)?.globalValue;
+    if (globalValue === undefined && Object.keys(legacyColors).length > 0) {
+      await configuration.update(palette, legacyColors, vscode.ConfigurationTarget.Global);
+    }
+  }
+  await context.globalState.update(paletteMigrationKey, true);
+}
+
 async function initializeTokenColors(context: vscode.ExtensionContext): Promise<void> {
   await migrateLegacyHelperRules(context);
+  await migrateLegacyPalettes(context);
   await synchronizeTokenColors();
 }
 
@@ -375,9 +481,12 @@ export function colorSettingsHtml(
   const scriptNonce = createNonce();
   const paletteSection = (palette: PaletteName, title: string, description: string): string => {
     const rows = colorDefinitions.map(definition => {
-      const value = colorPickerValue(configuredColor(definition, palette));
-      const defaultValue = colorPickerValue(palette === 'light' ? definition.lightFallback : definition.darkFallback);
-      return `<label class="row"><span>${definition.label}</span><span class="control"><input type="color" data-palette="${palette}" data-key="${definition.key}" data-default="${defaultValue}" value="${value}"><code>${value.toUpperCase()}</code></span></label>`;
+      const value = configuredColor(definition, palette).toUpperCase();
+      const pickerValue = colorPickerValue(value);
+      const defaultValue = (palette === 'light' ? definition.lightFallback : definition.darkFallback).toUpperCase();
+      const inputId = `${palette}-${definition.key}-hex`;
+      const errorId = `${inputId}-error`;
+      return `<div class="row"><label for="${inputId}">${definition.label}</label><span class="control"><input type="color" data-color-picker data-palette="${palette}" data-key="${definition.key}" value="${pickerValue}" aria-label="${definition.label} color picker"><span class="hex-control"><input id="${inputId}" class="hex-input" type="text" data-color-input data-palette="${palette}" data-key="${definition.key}" data-default="${defaultValue}" value="${value}" maxlength="9" spellcheck="false" aria-describedby="${errorId}"><span id="${errorId}" class="color-error" data-color-error aria-live="polite"></span></span></span></div>`;
     }).join('');
     const hidden = palette === initialPalette ? '' : ' hidden';
     return `<section id="${palette}-panel" role="tabpanel" aria-labelledby="${palette}-tab"${hidden}><h2>${title}</h2><p>${description}</p><div class="panel">${rows}</div></section>`;
@@ -421,7 +530,10 @@ export function colorSettingsHtml(
     .row:last-child { border-bottom: 0; }
     .control { display: flex; align-items: center; gap: 12px; }
     input[type=color] { width: 58px; height: 30px; border: 1px solid var(--vscode-input-border); background: transparent; cursor: pointer; padding: 2px; }
-    code { min-width: 72px; color: var(--vscode-foreground); }
+    .hex-control { display: flex; flex-direction: column; min-width: 150px; }
+    .hex-input { box-sizing: border-box; width: 150px; padding: 5px 7px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); font-family: var(--vscode-editor-font-family); }
+    .hex-input[aria-invalid="true"] { border-color: var(--vscode-inputValidation-errorBorder); }
+    .color-error { min-height: 15px; margin-top: 2px; color: var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground)); font-size: 11px; }
     .actions, .card-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
     button { border: 0; color: var(--vscode-button-foreground); background: var(--vscode-button-background); padding: 8px 15px; cursor: pointer; }
     button:hover { background: var(--vscode-button-hoverBackground); }
@@ -438,6 +550,7 @@ export function colorSettingsHtml(
     .inheritance { min-height: 18px; margin: 2px 0 7px; color: var(--vscode-descriptionForeground); font-size: 12px; }
     .card-actions { margin-top: 9px; }
     #status { min-height: 20px; color: var(--vscode-testing-iconPassed); margin-top: 12px; text-align: right; }
+    #status.error { color: var(--vscode-errorForeground); }
   </style>
 </head>
 <body>
@@ -457,10 +570,39 @@ export function colorSettingsHtml(
     const panelNames = ['dark', 'light', 'diagnostics'];
     const paletteNames = ['dark', 'light'];
     const tabs = [...document.querySelectorAll('[role=tab]')];
-    const inputs = [...document.querySelectorAll('input[type=color]')];
+    const colorPattern = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+    const colorInputs = [...document.querySelectorAll('[data-color-input]')];
+    const colorPickers = [...document.querySelectorAll('[data-color-picker]')];
     const diagnosticCards = [...document.querySelectorAll('[data-diagnostic-card]')];
     let diagnosticState = ${serializeForScript(diagnostics)};
     let selectedPanel = '${initialPalette}';
+
+    function matchingColorControl(controls, source) {
+      return controls.find(candidate => candidate.dataset.palette === source.dataset.palette && candidate.dataset.key === source.dataset.key);
+    }
+
+    function pickerColor(value) {
+      const hex = value.slice(1);
+      if (hex.length === 3 || hex.length === 4) {
+        return '#' + hex.slice(0, 3).split('').map(character => character + character).join('');
+      }
+      return '#' + hex.slice(0, 6);
+    }
+
+    function setStatus(message, error = false) {
+      const status = document.getElementById('status');
+      status.textContent = message;
+      status.classList.toggle('error', error);
+    }
+
+    function validateColorInput(input) {
+      const valid = colorPattern.test(input.value.trim());
+      input.setAttribute('aria-invalid', String(!valid));
+      input.parentElement.querySelector('[data-color-error]').textContent = valid
+        ? ''
+        : 'Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.';
+      return valid;
+    }
 
     function selectPanel(panel, moveFocus) {
       selectedPanel = panel;
@@ -473,7 +615,7 @@ export function colorSettingsHtml(
       }
       document.getElementById('color-actions').hidden = panel === 'diagnostics';
       if (moveFocus) document.getElementById(panel + '-tab').focus();
-      document.getElementById('status').textContent = '';
+      setStatus('');
     }
 
     function renderDiagnosticCard(card) {
@@ -514,8 +656,23 @@ export function colorSettingsHtml(
         }
       });
     }
-    for (const input of inputs) {
-      input.addEventListener('input', () => { input.nextElementSibling.textContent = input.value.toUpperCase(); });
+    for (const picker of colorPickers) {
+      picker.addEventListener('input', () => {
+        const input = matchingColorControl(colorInputs, picker);
+        input.value = picker.value.toUpperCase();
+        validateColorInput(input);
+      });
+    }
+    for (const input of colorInputs) {
+      input.addEventListener('input', () => {
+        if (validateColorInput(input)) {
+          matchingColorControl(colorPickers, input).value = pickerColor(input.value.trim());
+        }
+      });
+      input.addEventListener('blur', () => {
+        input.value = input.value.trim().toUpperCase();
+        validateColorInput(input);
+      });
     }
     for (const card of diagnosticCards) {
       card.querySelector('[data-diagnostic-scope]').addEventListener('change', () => renderDiagnosticCard(card));
@@ -529,8 +686,14 @@ export function colorSettingsHtml(
       renderDiagnosticCard(card);
     }
     document.getElementById('save').addEventListener('click', () => {
+      const invalidInputs = colorInputs.filter(input => !validateColorInput(input));
+      if (invalidInputs.length > 0) {
+        setStatus('Correct the invalid hexadecimal color values before applying the palettes.', true);
+        invalidInputs[0].focus();
+        return;
+      }
       const colors = { dark: {}, light: {} };
-      for (const input of inputs) colors[input.dataset.palette][input.dataset.key] = input.value.toUpperCase();
+      for (const input of colorInputs) colors[input.dataset.palette][input.dataset.key] = input.value.trim().toUpperCase();
       vscode.postMessage({ type: 'save', colors });
     });
     document.getElementById('reset').addEventListener('click', () => {
@@ -538,18 +701,21 @@ export function colorSettingsHtml(
     });
     window.addEventListener('message', event => {
       if (event.data && event.data.type === 'saved') {
-        document.getElementById('status').textContent = 'Colors applied.';
+        setStatus('Colors applied.');
+      } else if (event.data && event.data.type === 'saveError') {
+        setStatus(event.data.message || 'The palettes contain an invalid hexadecimal color.', true);
       } else if (event.data && event.data.type === 'reset' && paletteNames.includes(event.data.palette)) {
-        for (const input of inputs.filter(candidate => candidate.dataset.palette === event.data.palette)) {
+        for (const input of colorInputs.filter(candidate => candidate.dataset.palette === event.data.palette)) {
           const value = event.data.colors[input.dataset.key] || input.dataset.default;
           input.value = value;
-          input.nextElementSibling.textContent = value.toUpperCase();
+          matchingColorControl(colorPickers, input).value = pickerColor(value);
+          validateColorInput(input);
         }
-        document.getElementById('status').textContent = 'Default colors restored for the ' + event.data.palette + ' theme.';
+        setStatus('Default colors restored for the ' + event.data.palette + ' theme.');
       } else if (event.data && event.data.type === 'diagnosticsState') {
         diagnosticState = event.data.state;
         for (const card of diagnosticCards) renderDiagnosticCard(card);
-        document.getElementById('status').textContent = event.data.message || '';
+        setStatus(event.data.message || '');
       }
     });
   </script>
@@ -573,22 +739,17 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
   colorPanel.webview.html = colorSettingsHtml(colorPanel.webview);
   colorPanel.onDidDispose(() => { colorPanel = undefined; }, null, context.subscriptions);
   colorPanel.webview.onDidReceiveMessage(async message => {
-    if (message?.type === 'save' && message.colors && typeof message.colors === 'object') {
-      const colors: StoredPalettes = { dark: {}, light: {} };
-      for (const palette of ['dark', 'light'] as const) {
-        const paletteValues = message.colors[palette];
-        if (!paletteValues || typeof paletteValues !== 'object') {
-          continue;
-        }
-        for (const definition of colorDefinitions) {
-          const value = paletteValues[definition.key];
-          if (typeof value === 'string' && colorPattern.test(value)) {
-            colors[palette]![definition.key] = value.toUpperCase();
-          }
-        }
+    if (message?.type === 'save') {
+      const colors = validateSubmittedPalettes(message.colors);
+      if (!colors) {
+        await colorPanel?.webview.postMessage({
+          type: 'saveError',
+          message: 'The palettes contain an invalid hexadecimal color. Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.'
+        });
+        return;
       }
       await queueColorUpdate(async () => {
-        await context.globalState.update(storageKey, colors);
+        await persistPalettes(colors);
         await synchronizeTokenColors();
       });
       await colorPanel?.webview.postMessage({ type: 'saved' });
@@ -596,9 +757,9 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
       const palette = message.palette as PaletteName;
       const colors = defaultColors(palette);
       await queueColorUpdate(async () => {
-        const palettes = storedPalettes();
-        palettes[palette] = colors;
-        await context.globalState.update(storageKey, palettes);
+        await vscode.workspace
+          .getConfiguration('krlHighlighting.palettes')
+          .update(palette, colors, vscode.ConfigurationTarget.Global);
         await synchronizeTokenColors();
       });
       await colorPanel?.webview.postMessage({ type: 'reset', palette, colors });
@@ -628,7 +789,8 @@ export function initializeColorSettings(context: vscode.ExtensionContext): void 
   context.subscriptions.push(
     vscode.commands.registerCommand('krlHelper.openColorSettings', () => openColorSettings(context)),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('krlHighlighting')) {
+      if (event.affectsConfiguration('krlHighlighting')
+        || event.affectsConfiguration('editor.tokenColorCustomizations')) {
         synchronizeSafely();
       }
       if (event.affectsConfiguration('krlHelper.diagnostics')) {
