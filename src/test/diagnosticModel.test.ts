@@ -58,15 +58,24 @@ suite('KRL diagnostic model', () => {
     assert.deepStrictEqual([...names].sort(), ['b_globalready', 'n_globalindex']);
   });
 
-  test('other DAT files require both PUBLIC and DECL GLOBAL', () => {
+  test('other DAT files require PUBLIC and an explicit GLOBAL modifier', () => {
     const publicDat = [
       'defdat Shared PUBLIC',
       'DECL BOOL b_NotGlobal',
-      'decl global int n_Visible'
+      'decl global int n_Visible',
+      'GLOBAL BOOL bLegacyVisible',
+      'GLOBAL DECL INT n_AlternateVisible'
     ].join('\n');
-    const privateDat = 'DEFDAT Shared\nDECL GLOBAL INT n_Hidden';
+    const privateDat = [
+      'DEFDAT Shared',
+      'DECL GLOBAL INT n_Hidden',
+      'GLOBAL BOOL bAlsoHidden'
+    ].join('\n');
 
-    assert.deepStrictEqual([...collectProjectDatDeclarations('/project/shared.dat', publicDat)], ['n_visible']);
+    assert.deepStrictEqual(
+      [...collectProjectDatDeclarations('/project/shared.dat', publicDat)].sort(),
+      ['blegacyvisible', 'n_alternatevisible', 'n_visible']
+    );
     assert.deepStrictEqual([...collectProjectDatDeclarations('/project/private.dat', privateDat)], []);
     assert.deepStrictEqual([
       ...collectProjectDatDeclarations('/project/public-only.dat', 'DEFDAT Shared PUBLIC\nDECL INT n_Hidden')

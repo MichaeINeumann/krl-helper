@@ -21,10 +21,23 @@ suite('KRL variable parser', () => {
         'ntolaxe', 'phere', 'ptarget', 't'
       ]
     );
-    assert.strictEqual(declarations.find(item => item.normalizedName === 'n_global')?.declGlobal, true);
+    assert.strictEqual(declarations.find(item => item.normalizedName === 'n_global')?.global, true);
     assert.strictEqual(declarations.find(item => item.normalizedName === 'bnhalt')?.kind, 'parameter');
     assert.strictEqual(declarations.find(item => item.normalizedName === 'inputword')?.kind, 'signal');
     assert.strictEqual(declarations.find(item => item.normalizedName === 'ntolaxe')?.line, 3);
+  });
+
+  test('marks GLOBAL declarations with and without DECL as global', () => {
+    const declarations = parseKrlVariableDeclarations([
+      'DECL GLOBAL BOOL b_First',
+      'GLOBAL DECL INT n_Second',
+      'GLOBAL BOOL bThird'
+    ].join('\n'));
+
+    assert.deepStrictEqual(
+      declarations.map(declaration => [declaration.normalizedName, declaration.global]),
+      [['b_first', true], ['n_second', true], ['bthird', true]]
+    );
   });
 
   test('finds variable references but excludes calls, members, system variables, and comments', () => {

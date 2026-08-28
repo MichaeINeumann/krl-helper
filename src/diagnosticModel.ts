@@ -1,13 +1,13 @@
 import * as path from 'path';
 import { sanitizeForAnalysis } from './diagnosticSanitizer';
-import { parseKrlVariableDeclarations } from './variableParser';
+import { ParsedKrlVariableDeclaration, parseKrlVariableDeclarations } from './variableParser';
 
 export const diagnosticSettingDefinitions = [
   {
     key: 'localVariablePrefixes',
     fullKey: 'krlHelper.diagnostics.localVariablePrefixes',
     label: 'Local variable prefixes',
-    description: 'Variables that must be declared in the current SRC/SUB, its companion DAT, or as function parameters.',
+    description: 'Variables that need a visible declaration, preferring the current module before project globals.',
     defaultValue: ['b', 'n']
   },
   {
@@ -127,7 +127,7 @@ export function collectGlobalSourceDeclarations(
   target: Set<string> = new Set<string>()
 ): Set<string> {
   for (const declaration of parseKrlVariableDeclarations(text)) {
-    if (declaration.kind === 'declaration' && declaration.global) {
+    if (isExplicitProjectGlobalDeclaration(declaration)) {
       target.add(declaration.normalizedName);
     }
   }
@@ -146,11 +146,17 @@ export function collectProjectDatDeclarations(
     return target;
   }
   for (const declaration of parseKrlVariableDeclarations(text)) {
-    if (declaration.kind === 'declaration' && declaration.declGlobal) {
+    if (isExplicitProjectGlobalDeclaration(declaration)) {
       target.add(declaration.normalizedName);
     }
   }
   return target;
+}
+
+export function isExplicitProjectGlobalDeclaration(
+  declaration: ParsedKrlVariableDeclaration
+): boolean {
+  return declaration.kind === 'declaration' && declaration.global;
 }
 
 export function hasPublicDefdatHeader(text: string): boolean {

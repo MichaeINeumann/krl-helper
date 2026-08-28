@@ -456,7 +456,7 @@ suite('KRL Helper', () => {
     }
   });
 
-  test('navigates to a legacy public DAT global without accepting it as locally visible', async () => {
+  test('uses public DAT GLOBAL declarations consistently for diagnostics and navigation', async () => {
     const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-krc-project-${Date.now()}`));
     const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'external.src');
     const globalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'legacy-global.dat');
@@ -466,13 +466,16 @@ suite('KRL Helper', () => {
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
       'DEF External()',
       '  advanceStop(bAdvanceStop)',
+      '  n_Counter = 1',
       '  bFreshGlobal = TRUE',
+      '  bStillMissing = TRUE',
       'END',
       ''
     ].join('\n')));
     await vscode.workspace.fs.writeFile(globalUri, Buffer.from([
       'DEFDAT LegacyGlobal PUBLIC',
       'GLOBAL BOOL bAdvanceStop=TRUE',
+      'GLOBAL DECL INT n_Counter',
       'ENDDAT',
       ''
     ].join('\n')));
@@ -481,9 +484,10 @@ suite('KRL Helper', () => {
       const document = await vscode.workspace.openTextDocument(sourceUri);
       await vscode.window.showTextDocument(document);
       const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
-        values.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'"))
+        values.some(diagnostic => diagnostic.message.includes("'bStillMissing'"))
       );
-      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'n_Counter'")));
 
       const position = document.positionAt(lastIdentifierOffset(document.getText(), 'bAdvanceStop'));
       const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
@@ -491,6 +495,14 @@ suite('KRL Helper', () => {
       );
       assert.ok(definitions.some(definition =>
         definition.uri.toString() === globalUri.toString() && definition.range.start.line === 1
+      ));
+
+      const alternatePosition = document.positionAt(lastIdentifierOffset(document.getText(), 'n_Counter'));
+      const alternateDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', sourceUri, alternatePosition
+      );
+      assert.ok(alternateDefinitions.some(definition =>
+        definition.uri.toString() === globalUri.toString() && definition.range.start.line === 2
       ));
 
       await vscode.workspace.fs.writeFile(freshGlobalUri, Buffer.from([

@@ -8,7 +8,6 @@ export interface ParsedKrlVariableDeclaration {
   normalizedName: string;
   kind: KrlVariableDeclarationKind;
   global: boolean;
-  declGlobal: boolean;
   line: number;
   lineStartOffset: number;
   nameStartOffset: number;
@@ -107,16 +106,14 @@ function parseVariableLine(
   const signal = /^\s*SIGNAL\s+([A-Za-z_][A-Za-z0-9_]*)\b/i.exec(line);
   if (signal) {
     const nameOffset = signal.index + signal[0].lastIndexOf(signal[1]);
-    return [createDeclaration(signal[1], 'signal', false, false, lineNumber, lineStartOffset, nameOffset)];
+    return [createDeclaration(signal[1], 'signal', false, lineNumber, lineStartOffset, nameOffset)];
   }
 
   const prefix = /^\s*(?:(DECL)\s+(?:(GLOBAL)\s+)?|(GLOBAL)\s+(?:(DECL)\s+)?)/i.exec(line);
   let global = false;
-  let declGlobal = false;
   let cursor = 0;
   if (prefix) {
     global = Boolean(prefix[2] || prefix[3]);
-    declGlobal = /^\s*DECL\s+GLOBAL\b/i.test(line);
     cursor = prefix[0].length;
     if (/^\s*DEF(?:FCT)?\b/i.test(line.slice(cursor))) {
       return [];
@@ -148,7 +145,7 @@ function parseVariableLine(
     }
     const nameOffset = segment.start + declarator[0].lastIndexOf(declarator[1]);
     return [createDeclaration(
-      declarator[1], 'declaration', global, declGlobal, lineNumber, lineStartOffset, nameOffset
+      declarator[1], 'declaration', global, lineNumber, lineStartOffset, nameOffset
     )];
   });
 }
@@ -177,7 +174,7 @@ function parseFunctionParameters(sanitized: string): ParsedKrlVariableDeclaratio
       }
       const absoluteNameOffset = openParenthesis + 1 + segment.start + identifier.index;
       parameters.push(createDeclaration(
-        identifier[0], 'parameter', false, false, definition.line,
+        identifier[0], 'parameter', false, definition.line,
         definition.lineStartOffset, absoluteNameOffset - definition.lineStartOffset
       ));
     }
@@ -189,7 +186,6 @@ function createDeclaration(
   name: string,
   kind: KrlVariableDeclarationKind,
   global: boolean,
-  declGlobal: boolean,
   line: number,
   lineStartOffset: number,
   nameOffsetInLine: number
@@ -200,7 +196,6 @@ function createDeclaration(
     normalizedName: name.toLowerCase(),
     kind,
     global,
-    declGlobal,
     line,
     lineStartOffset,
     nameStartOffset,

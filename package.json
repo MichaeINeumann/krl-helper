@@ -262,7 +262,7 @@
           ],
           "scope": "window",
           "order": 100,
-          "description": "Literal prefixes for variables that must be declared in the current module. Prefix matching is case-insensitive."
+          "description": "Literal prefixes for variables that need a visible declaration, preferring the current module before project globals. Prefix matching is case-insensitive."
         },
         "krlHelper.diagnostics.globalVariablePrefixes": {
           "type": "array",

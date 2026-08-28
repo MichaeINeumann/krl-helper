@@ -541,8 +541,9 @@ function findUndeclaredDiagnostics(
         || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
       continue;
     }
-    const declaredNames = scope === 'global' ? globalNames : localNames;
-    if (ignoredIdentifiers.has(normalized) || declaredNames.has(normalized)) {
+    const declared = globalNames.has(normalized)
+      || (scope === 'local' && localNames.has(normalized));
+    if (ignoredIdentifiers.has(normalized) || declared) {
       continue;
     }
     const declarationSpace = scope === 'global' ? 'global project declarations' : 'the current module';
