@@ -1,5 +1,6 @@
 .git/**
 .github/**
+.agents/**
 .vscode/**
 .agents/**
 .vscode-test/**
