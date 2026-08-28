@@ -488,6 +488,9 @@ suite('KRL Helper', () => {
       );
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'n_Counter'")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message ===
+        "Variable 'bStillMissing' is not declared in the current module or visible project globals."
+      ));
 
       const position = document.positionAt(lastIdentifierOffset(document.getText(), 'bAdvanceStop'));
       const definitions = await vscode.commands.executeCommand<vscode.Location[]>(

@@ -546,7 +546,9 @@ function findUndeclaredDiagnostics(
     if (ignoredIdentifiers.has(normalized) || declared) {
       continue;
     }
-    const declarationSpace = scope === 'global' ? 'global project declarations' : 'the current module';
+    const declarationSpace = scope === 'global'
+      ? 'global project declarations'
+      : 'the current module or visible project globals';
     diagnostics.push(new vscode.Diagnostic(
       new vscode.Range(document.positionAt(match.index), document.positionAt(match.index + identifier.length)),
       `Variable '${identifier}' is not declared in ${declarationSpace}.`,
