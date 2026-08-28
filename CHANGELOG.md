@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+### Fixes
+
+- Persist custom dark and light syntax palettes in VS Code user settings so they survive extension updates and participate in Settings Sync
+- Add direct hexadecimal color entry with validation and paste support to the KRL Helper settings editor
+- Keep theme-scoped palette rules synchronized across VS Code theme changes and multiple open windows
+
 ## 0.2.0
 
 ### Features

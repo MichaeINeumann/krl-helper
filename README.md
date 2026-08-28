@@ -86,7 +86,7 @@ The following settings accept CSS-style hexadecimal colors such as `#C0C0C0` or 
 | `krlHighlighting.colors.systemVariables` | `$`-prefixed system variables |
 | `krlHighlighting.colors.listFunctions` | Boolean and enum values plus string/list functions |
 
-The color editor stores separate light and dark palettes and switches them with the active VS Code theme.
+The color editor accepts `#RGB`, `#RGBA`, `#RRGGBB`, and `#RRGGBBAA` values through either the picker or direct text entry. It stores separate light and dark palettes in the VS Code user settings `krlHighlighting.palettes.dark` and `krlHighlighting.palettes.light`, so saved colors survive normal extension updates and participate in Settings Sync. Theme-scoped rules keep both palettes available when different VS Code windows use different themes. Existing palettes from older extension versions are migrated automatically.
 
 ### Diagnostics
 
