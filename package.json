@@ -254,7 +254,7 @@
         "krlHighlighting.palettes.dark": {
           "type": "object",
           "default": {},
-          "scope": "window",
+          "scope": "application",
           "order": 29,
           "additionalProperties": {
             "type": "string",
@@ -265,7 +265,7 @@
         "krlHighlighting.palettes.light": {
           "type": "object",
           "default": {},
-          "scope": "window",
+          "scope": "application",
           "order": 30,
           "additionalProperties": {
             "type": "string",

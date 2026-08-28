@@ -67,16 +67,57 @@ interface StoredPalettes {
   light?: Record<string, string>;
 }
 
-interface CompletePalettes {
+export interface CompletePalettes {
   dark: Record<string, string>;
   light: Record<string, string>;
 }
+
+export interface ThemeSelectionConfiguration {
+  colorTheme: string;
+  preferredDarkColorTheme: string;
+  preferredLightColorTheme: string;
+  preferredHighContrastColorTheme: string;
+  preferredHighContrastLightColorTheme: string;
+  autoDetectColorScheme: boolean;
+  autoDetectHighContrast: boolean;
+}
+
+interface PaletteConfiguration {
+  inspect<T>(section: string): { globalValue?: T } | undefined;
+  update(section: string, value: unknown, target: vscode.ConfigurationTarget): Thenable<void>;
+}
+
+class PalettePersistenceError extends Error {}
 
 function activePalette(): PaletteName {
   const kind = vscode.window.activeColorTheme.kind;
   return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight
     ? 'light'
     : 'dark';
+}
+
+export function themeSelectorForKind(
+  kind: vscode.ColorThemeKind,
+  configuration: ThemeSelectionConfiguration
+): string {
+  const highContrast = kind === vscode.ColorThemeKind.HighContrast
+    || kind === vscode.ColorThemeKind.HighContrastLight;
+  const light = kind === vscode.ColorThemeKind.Light
+    || kind === vscode.ColorThemeKind.HighContrastLight;
+  let themeName = configuration.colorTheme;
+
+  if (highContrast && configuration.autoDetectHighContrast) {
+    themeName = light
+      ? configuration.preferredHighContrastLightColorTheme
+      : configuration.preferredHighContrastColorTheme;
+  } else if (configuration.autoDetectColorScheme) {
+    themeName = light
+      ? configuration.preferredLightColorTheme
+      : configuration.preferredDarkColorTheme;
+  }
+
+  const normalizedName = themeName.trim();
+  return normalizedName ? `[${normalizedName}]` : '';
 }
 
 function legacyStoredColors(palette: PaletteName): Record<string, string> {
@@ -106,7 +147,7 @@ function validColors(value: unknown): Record<string, string> {
 function configuredPaletteColors(palette: PaletteName): Record<string, string> {
   const configured = vscode.workspace
     .getConfiguration('krlHighlighting.palettes')
-    .get<unknown>(palette, {});
+    .inspect<unknown>(palette)?.globalValue;
   return validColors(configured);
 }
 
@@ -141,10 +182,36 @@ export function validateSubmittedPalettes(value: unknown): CompletePalettes | un
   return normalized;
 }
 
-async function persistPalettes(palettes: CompletePalettes): Promise<void> {
-  const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
-  await configuration.update('dark', palettes.dark, vscode.ConfigurationTarget.Global);
-  await configuration.update('light', palettes.light, vscode.ConfigurationTarget.Global);
+export async function persistPalettes(
+  palettes: CompletePalettes,
+  configuration: PaletteConfiguration = vscode.workspace.getConfiguration('krlHighlighting.palettes')
+): Promise<void> {
+  const previousDark = configuration.inspect<unknown>('dark')?.globalValue;
+  const previousLight = configuration.inspect<unknown>('light')?.globalValue;
+  try {
+    await configuration.update('dark', palettes.dark, vscode.ConfigurationTarget.Global);
+  } catch {
+    throw new PalettePersistenceError('The palettes could not be saved. No palette changes were applied.');
+  }
+
+  try {
+    await configuration.update('light', palettes.light, vscode.ConfigurationTarget.Global);
+  } catch {
+    let rollbackFailed = false;
+    try {
+      await configuration.update('dark', previousDark, vscode.ConfigurationTarget.Global);
+    } catch {
+      rollbackFailed = true;
+    }
+    try {
+      await configuration.update('light', previousLight, vscode.ConfigurationTarget.Global);
+    } catch {
+      rollbackFailed = true;
+    }
+    throw new PalettePersistenceError(rollbackFailed
+      ? 'The palettes were only partially saved and could not be restored. Review the KRL palette values in User Settings before retrying.'
+      : 'The palettes could not be saved. The previous User Settings values were restored.');
+  }
 }
 
 function configuredColor(definition: ColorDefinition, palette: PaletteName = activePalette()): string {
@@ -337,9 +404,24 @@ export function removeAllHelperColors(currentValue: TokenColorCustomizations): T
   return nextValue;
 }
 
+export function hasTopLevelHelperColors(value: TokenColorCustomizations | undefined): boolean {
+  return Array.isArray(value?.textMateRules) && value.textMateRules.some(isKrlRule);
+}
+
 function activeThemeSelector(): string {
-  const themeName = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme', '').trim();
-  return themeName ? `[${themeName}]` : '';
+  const workbenchConfiguration = vscode.workspace.getConfiguration('workbench');
+  const windowConfiguration = vscode.workspace.getConfiguration('window');
+  return themeSelectorForKind(vscode.window.activeColorTheme.kind, {
+    colorTheme: workbenchConfiguration.get<string>('colorTheme', ''),
+    preferredDarkColorTheme: workbenchConfiguration.get<string>('preferredDarkColorTheme', ''),
+    preferredLightColorTheme: workbenchConfiguration.get<string>('preferredLightColorTheme', ''),
+    preferredHighContrastColorTheme: workbenchConfiguration.get<string>('preferredHighContrastColorTheme', ''),
+    preferredHighContrastLightColorTheme: workbenchConfiguration.get<string>(
+      'preferredHighContrastLightColorTheme', ''
+    ),
+    autoDetectColorScheme: windowConfiguration.get<boolean>('autoDetectColorScheme', false),
+    autoDetectHighContrast: windowConfiguration.get<boolean>('autoDetectHighContrast', true)
+  });
 }
 
 function queueColorUpdate(task: () => Promise<void>): Promise<void> {
@@ -352,6 +434,32 @@ function queueColorUpdate(task: () => Promise<void>): Promise<void> {
 
 function synchronizeSafely(): void {
   void queueColorUpdate(() => synchronizeTokenColors());
+}
+
+async function reconcileExternalTokenColorChange(): Promise<void> {
+  const editorConfiguration = vscode.workspace.getConfiguration('editor');
+  const inspected = editorConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations');
+  const layers: readonly { target: vscode.ConfigurationTarget; value?: TokenColorCustomizations }[] = [
+    { target: vscode.ConfigurationTarget.Global, value: inspected?.globalValue },
+    { target: vscode.ConfigurationTarget.Workspace, value: inspected?.workspaceValue },
+    { target: vscode.ConfigurationTarget.WorkspaceFolder, value: inspected?.workspaceFolderValue }
+  ];
+  let removedTopLevelRules = false;
+
+  for (const layer of layers) {
+    if (!hasTopLevelHelperColors(layer.value)) {
+      continue;
+    }
+    removedTopLevelRules = true;
+    await editorConfiguration.update('tokenColorCustomizations', {
+      ...layer.value,
+      textMateRules: rulesWithoutHelperColors(layer.value?.textMateRules)
+    }, layer.target);
+  }
+
+  if (removedTopLevelRules) {
+    await synchronizeTokenColors();
+  }
 }
 
 async function migrateLegacyHelperRules(context: vscode.ExtensionContext): Promise<void> {
@@ -748,20 +856,42 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
         });
         return;
       }
-      await queueColorUpdate(async () => {
-        await persistPalettes(colors);
-        await synchronizeTokenColors();
-      });
+      let palettesPersisted = false;
+      try {
+        await queueColorUpdate(async () => {
+          await persistPalettes(colors);
+          palettesPersisted = true;
+          await synchronizeTokenColors();
+        });
+      } catch (error) {
+        const message = error instanceof PalettePersistenceError
+          ? error.message
+          : palettesPersisted
+            ? 'The palettes were saved, but the syntax colors could not be applied. Retry or reload VS Code.'
+            : 'The palettes could not be saved. No palette changes were applied.';
+        await colorPanel?.webview.postMessage({ type: 'saveError', message });
+        return;
+      }
       await colorPanel?.webview.postMessage({ type: 'saved' });
     } else if (message?.type === 'reset' && (message.palette === 'dark' || message.palette === 'light')) {
       const palette = message.palette as PaletteName;
       const colors = defaultColors(palette);
-      await queueColorUpdate(async () => {
-        await vscode.workspace
-          .getConfiguration('krlHighlighting.palettes')
-          .update(palette, colors, vscode.ConfigurationTarget.Global);
-        await synchronizeTokenColors();
-      });
+      let palettePersisted = false;
+      try {
+        await queueColorUpdate(async () => {
+          await vscode.workspace
+            .getConfiguration('krlHighlighting.palettes')
+            .update(palette, colors, vscode.ConfigurationTarget.Global);
+          palettePersisted = true;
+          await synchronizeTokenColors();
+        });
+      } catch {
+        const message = palettePersisted
+          ? `The ${palette} palette was reset, but the syntax colors could not be applied. Retry or reload VS Code.`
+          : `The ${palette} palette could not be reset in User Settings.`;
+        await colorPanel?.webview.postMessage({ type: 'saveError', message });
+        return;
+      }
       await colorPanel?.webview.postMessage({ type: 'reset', palette, colors });
     } else if (message?.type === 'diagnosticUpdate' || message?.type === 'diagnosticReset') {
       const definition = diagnosticSettingDefinitions.find(candidate => candidate.key === message.key);
@@ -789,9 +919,10 @@ export function initializeColorSettings(context: vscode.ExtensionContext): void 
   context.subscriptions.push(
     vscode.commands.registerCommand('krlHelper.openColorSettings', () => openColorSettings(context)),
     vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('krlHighlighting')
-        || event.affectsConfiguration('editor.tokenColorCustomizations')) {
+      if (event.affectsConfiguration('krlHighlighting')) {
         synchronizeSafely();
+      } else if (event.affectsConfiguration('editor.tokenColorCustomizations')) {
+        void queueColorUpdate(() => reconcileExternalTokenColorChange());
       }
       if (event.affectsConfiguration('krlHelper.diagnostics')) {
         void colorPanel?.webview.postMessage({ type: 'diagnosticsState', state: diagnosticSettingsView() });

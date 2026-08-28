@@ -2,8 +2,11 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   colorSettingsHtml,
+  hasTopLevelHelperColors,
+  persistPalettes,
   removeAllHelperColors,
   TextMateRule,
+  themeSelectorForKind,
   TokenColorCustomizations,
   updateCustomizationValue,
   validateSubmittedPalettes
@@ -12,6 +15,39 @@ import {
 const helperPrefix = 'KRL Helper: ';
 
 suite('KRL syntax color configuration', () => {
+  test('selects the effective automatic light, dark, and high-contrast themes', () => {
+    const configuration = {
+      colorTheme: 'Static Theme',
+      preferredDarkColorTheme: 'Automatic Dark',
+      preferredLightColorTheme: 'Automatic Light',
+      preferredHighContrastColorTheme: 'Automatic High Contrast',
+      preferredHighContrastLightColorTheme: 'Automatic High Contrast Light',
+      autoDetectColorScheme: true,
+      autoDetectHighContrast: true
+    };
+
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.Light, configuration),
+      '[Automatic Light]'
+    );
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.Dark, configuration),
+      '[Automatic Dark]'
+    );
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.HighContrastLight, configuration),
+      '[Automatic High Contrast Light]'
+    );
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.Dark, {
+        ...configuration,
+        autoDetectColorScheme: false,
+        autoDetectHighContrast: false
+      }),
+      '[Static Theme]'
+    );
+  });
+
   test('replaces active helper colors while preserving a different single-theme palette', () => {
     const foreignGeneralRule: TextMateRule = {
       scope: 'source.krl keyword.control.if.krl',
@@ -118,6 +154,18 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(cleaned, customizations);
   });
 
+  test('recognizes only stale top-level helper rules as external synchronization conflicts', () => {
+    const themedOnly: TokenColorCustomizations = {
+      '[Dark Test Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] }
+    };
+
+    assert.strictEqual(hasTopLevelHelperColors(themedOnly), false);
+    assert.strictEqual(hasTopLevelHelperColors({
+      ...themedOnly,
+      textMateRules: [helperRule('Regular text', '#C0C0C0')]
+    }), true);
+  });
+
   test('reads update-stable palettes from VS Code user configuration', async () => {
     const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
     const previousValue = configuration.inspect<Record<string, string>>('dark')?.globalValue;
@@ -175,7 +223,56 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(validateSubmittedPalettes(colors), undefined);
   });
 
+  test('restores both User Settings values when the second palette write fails', async () => {
+    const previous = completePalettes('#112233');
+    const next = completePalettes('#445566');
+    const values: Record<string, unknown> = { dark: previous.dark, light: previous.light };
+    let rejectNextLightWrite = true;
+    const configuration = {
+      inspect: <T>(section: string): { globalValue?: T } => ({ globalValue: values[section] as T }),
+      update: async (section: string, value: unknown): Promise<void> => {
+        if (section === 'light' && rejectNextLightWrite) {
+          rejectNextLightWrite = false;
+          throw new Error('synthetic write failure');
+        }
+        values[section] = value;
+      }
+    };
+
+    await assert.rejects(
+      persistPalettes(next, configuration),
+      /previous User Settings values were restored/
+    );
+    assert.deepStrictEqual(values, previous);
+  });
+
+  test('reports a recoverable partial palette write when rollback also fails', async () => {
+    const previous = completePalettes('#112233');
+    const next = completePalettes('#445566');
+    const configuration = {
+      inspect: <T>(section: string): { globalValue?: T } => ({
+        globalValue: previous[section as keyof typeof previous] as T
+      }),
+      update: async (section: string, value: unknown): Promise<void> => {
+        if (section === 'light' || value === previous.dark) {
+          throw new Error('synthetic write failure');
+        }
+      }
+    };
+
+    await assert.rejects(
+      persistPalettes(next, configuration),
+      /only partially saved.*Review the KRL palette values/
+    );
+  });
+
   test('settings editor renders color and diagnostics tabs with palette defaults', () => {
+    const extension = vscode.extensions.getExtension('MichaeINeumann.krl-helper');
+    assert.ok(extension);
+    const properties = extension.packageJSON.contributes.configuration.properties;
+    assert.strictEqual(properties['krlHighlighting.palettes.dark'].scope, 'application');
+    assert.strictEqual(properties['krlHighlighting.palettes.light'].scope, 'application');
+
     const html = colorSettingsHtml({ cspSource: 'test-source' } as vscode.Webview, 'light');
 
     assert.ok(html.includes('role="tablist"'));
