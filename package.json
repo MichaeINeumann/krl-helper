@@ -2,7 +2,7 @@
   "name": "krl-helper",
   "displayName": "KRL Helper",
   "description": "Language support and productivity tools for KUKA Robot Language (KRL) in Visual Studio Code.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "MichaeINeumann",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -251,27 +251,29 @@
           "order": 28,
           "description": "Color for enum values, Boolean values, and string or list functions."
         },
-        "krlHighlighting.palettes.dark": {
+        "krlHighlighting.palettes": {
           "type": "object",
           "default": {},
           "scope": "application",
           "order": 29,
-          "additionalProperties": {
-            "type": "string",
-            "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+          "properties": {
+            "dark": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+              }
+            },
+            "light": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+              }
+            }
           },
-          "description": "Update-stable dark syntax palette saved by KRL Helper: Open Settings."
-        },
-        "krlHighlighting.palettes.light": {
-          "type": "object",
-          "default": {},
-          "scope": "application",
-          "order": 30,
-          "additionalProperties": {
-            "type": "string",
-            "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
-          },
-          "description": "Update-stable light syntax palette saved by KRL Helper: Open Settings."
+          "additionalProperties": false,
+          "description": "Update-stable dark and light syntax palettes saved atomically by KRL Helper: Open Settings."
         },
         "krlHelper.diagnostics.localVariablePrefixes": {
           "type": "array",
