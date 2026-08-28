@@ -27,7 +27,7 @@ For development or testing, build a VSIX and install it from the command line:
 npm ci
 npm run package
 npx @vscode/vsce package
-code --install-extension krl-helper-0.2.0.vsix
+code --install-extension krl-helper-0.3.0.vsix
 ```
 
 You can also use **Extensions: Install from VSIX...** from the Command Palette.
@@ -86,7 +86,7 @@ The following settings accept CSS-style hexadecimal colors such as `#C0C0C0` or 
 | `krlHighlighting.colors.systemVariables` | `$`-prefixed system variables |
 | `krlHighlighting.colors.listFunctions` | Boolean and enum values plus string/list functions |
 
-The color editor accepts `#RGB`, `#RGBA`, `#RRGGBB`, and `#RRGGBBAA` values through either the picker or direct text entry. It stores the light and dark palettes together in the VS Code user setting `krlHighlighting.palettes`, so the pair is updated atomically, survives normal extension updates, and participates in Settings Sync. **Restore Defaults** changes the selected palette draft; use **Apply Colors** to save both palettes atomically. Theme-scoped rules keep both palettes available when different VS Code windows use different themes. Managed rules stay in User Settings by default; an explicit workspace value for `krlHighlighting.applyCustomColors` uses a workspace override so opt-ins and opt-outs remain isolated. Existing palettes from older extension versions are migrated automatically.
+The color editor accepts `#RGB`, `#RGBA`, `#RRGGBB`, and `#RRGGBBAA` values through either the picker or direct text entry. It stores the light and dark palettes together in the VS Code user setting `krlHighlighting.palettes`, so the pair is updated atomically, survives normal extension updates, and participates in Settings Sync. **Restore Defaults** changes the selected palette draft; use **Apply Colors** to save both palettes atomically. Explicit `krlHighlighting.colors.*` values from native Settings remain supported and take precedence for the dark palette; reset those overrides to let the palette editor control the corresponding colors. Theme-scoped rules keep both palettes available when different VS Code windows use different themes. Managed rules stay in User Settings by default; an explicit workspace value for `krlHighlighting.applyCustomColors` uses a reversible workspace override so opt-ins and opt-outs remain isolated. Existing palettes from older extension versions are migrated automatically.
 
 ### Diagnostics
 

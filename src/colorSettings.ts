@@ -9,6 +9,7 @@ const rulePrefix = 'KRL Helper: ';
 const storageKey = 'krlHelper.syntaxColors';
 const deterministicMigrationKey = 'krlHelper.syntaxColorsDeterministic.v5';
 const paletteMigrationKey = 'krlHelper.syntaxColorsConfiguration.v2';
+const workspaceMaskStateKey = 'krlHelper.syntaxColorsWorkspaceMask.v1';
 const colorPattern = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 type TextMateScope = string | readonly string[];
@@ -70,6 +71,12 @@ interface StoredPalettes {
 export interface CompletePalettes {
   dark: Record<string, string>;
   light: Record<string, string>;
+}
+
+interface WorkspaceMaskState {
+  originalPresent: boolean;
+  originalValue?: TokenColorCustomizations;
+  managedValue: TokenColorCustomizations;
 }
 
 export interface ThemeSelectionConfiguration {
@@ -208,6 +215,20 @@ function storedColors(palette: PaletteName): Record<string, string> {
   };
 }
 
+function explicitLegacyColor(definition: ColorDefinition): string | undefined {
+  const inspected = vscode.workspace
+    .getConfiguration('krlHighlighting.colors')
+    .inspect<unknown>(definition.key);
+  const value = inspected?.workspaceFolderValue
+    ?? inspected?.workspaceValue
+    ?? inspected?.globalValue;
+  return typeof value === 'string' && colorPattern.test(value) ? value.toUpperCase() : undefined;
+}
+
+function legacyColorOverrideCount(): number {
+  return colorDefinitions.filter(definition => explicitLegacyColor(definition) !== undefined).length;
+}
+
 export function validateSubmittedPalettes(value: unknown): CompletePalettes | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
@@ -244,15 +265,16 @@ export async function persistPalettes(
 
 function configuredColor(definition: ColorDefinition, palette: PaletteName = activePalette()): string {
   const fallback = palette === 'light' ? definition.lightFallback : definition.darkFallback;
+  const legacyOverride = palette === 'dark' ? explicitLegacyColor(definition) : undefined;
+  if (legacyOverride) {
+    return legacyOverride;
+  }
   const storedValue = storedColors(palette)[definition.key];
   if (typeof storedValue === 'string' && colorPattern.test(storedValue)) {
     return storedValue;
   }
 
-  const value = palette === 'dark'
-    ? vscode.workspace.getConfiguration('krlHighlighting.colors').get<string>(definition.key, fallback)
-    : fallback;
-  return colorPattern.test(value) ? value : fallback;
+  return fallback;
 }
 
 function paletteSettingsView(): CompletePalettes {
@@ -298,27 +320,156 @@ export async function synchronizeTokenColors(): Promise<void> {
   const workspacePreference = hasWorkspace
     ? highlightingConfiguration.inspect<boolean>('applyCustomColors')?.workspaceValue
     : undefined;
+  const storedMaskState = extensionContext?.workspaceState.get<WorkspaceMaskState>(workspaceMaskStateKey);
+  const currentWorkspaceValue = inspected?.workspaceValue;
   const layer = managedConfigurationLayer(inspected, hasWorkspace, workspacePreference);
   const enabled = highlightingConfiguration.get<boolean>('applyCustomColors', true);
   const nextValue = updateCustomizationTargets(layer.value, enabled, configuredThemeTargets());
 
-  if (hasWorkspace && workspacePreference === undefined && inspected?.workspaceValue) {
-    const cleanedWorkspaceValue = removeAllHelperColors(inspected.workspaceValue);
-    if (JSON.stringify(inspected.workspaceValue) !== JSON.stringify(cleanedWorkspaceValue)) {
-      await editorConfiguration.update(
-        'tokenColorCustomizations',
-        cleanedWorkspaceValue,
-        vscode.ConfigurationTarget.Workspace
+  if (hasWorkspace && workspacePreference === undefined) {
+    if (storedMaskState) {
+      const userEditedMask = !valuesEqual(storedMaskState.managedValue, currentWorkspaceValue ?? {});
+      const restoredValue = restoreWorkspaceCustomizationEdits(
+        storedMaskState.originalValue ?? {},
+        storedMaskState.managedValue,
+        currentWorkspaceValue ?? {}
       );
+      const restorePresent = storedMaskState.originalPresent || userEditedMask;
+      const workspaceValue = restorePresent ? restoredValue : undefined;
+      if (!valuesEqual(currentWorkspaceValue, workspaceValue)) {
+        await editorConfiguration.update(
+          'tokenColorCustomizations',
+          workspaceValue,
+          vscode.ConfigurationTarget.Workspace
+        );
+      }
+      await extensionContext?.workspaceState.update(workspaceMaskStateKey, undefined);
+    } else if (currentWorkspaceValue) {
+      const cleanedWorkspaceValue = removeAllHelperColors(currentWorkspaceValue);
+      if (!valuesEqual(currentWorkspaceValue, cleanedWorkspaceValue)) {
+        await editorConfiguration.update(
+          'tokenColorCustomizations',
+          cleanedWorkspaceValue,
+          vscode.ConfigurationTarget.Workspace
+        );
+      }
     }
   }
-  if (JSON.stringify(layer.value) !== JSON.stringify(nextValue)) {
+  if (!valuesEqual(layer.value, nextValue)) {
     await editorConfiguration.update(
       'tokenColorCustomizations',
       nextValue,
       layer.target
     );
+    if (layer.target === vscode.ConfigurationTarget.Workspace) {
+      const userEditedMask = storedMaskState
+        ? !valuesEqual(storedMaskState.managedValue, currentWorkspaceValue ?? {})
+        : false;
+      const originalValue = storedMaskState
+        ? restoreWorkspaceCustomizationEdits(
+          storedMaskState.originalValue ?? {},
+          storedMaskState.managedValue,
+          currentWorkspaceValue ?? {}
+        )
+        : currentWorkspaceValue;
+      await extensionContext?.workspaceState.update(workspaceMaskStateKey, {
+        originalPresent: storedMaskState?.originalPresent === true
+          || currentWorkspaceValue !== undefined && (!storedMaskState || userEditedMask),
+        originalValue,
+        managedValue: nextValue
+      } satisfies WorkspaceMaskState);
+    }
+  } else if (storedMaskState && layer.target === vscode.ConfigurationTarget.Workspace
+      && !valuesEqual(storedMaskState.managedValue, currentWorkspaceValue ?? {})) {
+    await extensionContext?.workspaceState.update(workspaceMaskStateKey, {
+      originalPresent: true,
+      originalValue: restoreWorkspaceCustomizationEdits(
+        storedMaskState.originalValue ?? {},
+        storedMaskState.managedValue,
+        currentWorkspaceValue ?? {}
+      ),
+      managedValue: currentWorkspaceValue ?? {}
+    } satisfies WorkspaceMaskState);
   }
+}
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+const removedCustomizationValue = Symbol('removedCustomizationValue');
+
+export function restoreWorkspaceCustomizationEdits(
+  originalValue: TokenColorCustomizations,
+  managedValue: TokenColorCustomizations,
+  currentValue: TokenColorCustomizations
+): TokenColorCustomizations {
+  const restored = restoreEditedValue(originalValue, managedValue, currentValue);
+  return restored === removedCustomizationValue ? {} : restored as TokenColorCustomizations;
+}
+
+function restoreEditedValue(originalValue: unknown, managedValue: unknown, currentValue: unknown): unknown {
+  if (valuesEqual(managedValue, currentValue)) {
+    return originalValue === undefined ? removedCustomizationValue : originalValue;
+  }
+  if (currentValue === undefined) {
+    return removedCustomizationValue;
+  }
+  if (Array.isArray(managedValue) && Array.isArray(currentValue)) {
+    return restoreArrayEdits(Array.isArray(originalValue) ? originalValue : [], managedValue, currentValue);
+  }
+  if (isCustomizationObject(managedValue) && isCustomizationObject(currentValue)) {
+    const originalObject = isCustomizationObject(originalValue) ? originalValue : {};
+    const restored: Record<string, unknown> = { ...originalObject };
+    for (const key of new Set([...Object.keys(managedValue), ...Object.keys(currentValue)])) {
+      const value = restoreEditedValue(originalObject[key], managedValue[key], currentValue[key]);
+      if (value === removedCustomizationValue) {
+        delete restored[key];
+      } else {
+        restored[key] = value;
+      }
+    }
+    return restored;
+  }
+  return currentValue;
+}
+
+function restoreArrayEdits(original: unknown[], managed: unknown[], current: unknown[]): unknown[] {
+  const restored = [...original];
+  const managedCounts = arrayValueCounts(managed);
+  const currentCounts = arrayValueCounts(current);
+  for (const [value, managedCount] of managedCounts) {
+    let removeCount = managedCount - (currentCounts.get(value) ?? 0);
+    for (let index = restored.length - 1; index >= 0 && removeCount > 0; index -= 1) {
+      if (JSON.stringify(restored[index]) === value) {
+        restored.splice(index, 1);
+        removeCount -= 1;
+      }
+    }
+  }
+  const seen = new Map<string, number>();
+  for (const item of current) {
+    const value = JSON.stringify(item);
+    const occurrence = (seen.get(value) ?? 0) + 1;
+    seen.set(value, occurrence);
+    if (occurrence > (managedCounts.get(value) ?? 0)) {
+      restored.push(item);
+    }
+  }
+  return restored;
+}
+
+function arrayValueCounts(values: unknown[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    const serialized = JSON.stringify(value);
+    counts.set(serialized, (counts.get(serialized) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function isCustomizationObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 export interface ConfigurationLayer {
@@ -978,7 +1129,7 @@ export function colorSettingsHtml(
       if (event.data && event.data.type === 'saved') {
         dirtyColorKeys.clear();
         setColorControlsDisabled(false);
-        setStatus('Colors applied.');
+        setStatus(event.data.message || 'Colors applied.');
       } else if (event.data && event.data.type === 'saveError') {
         setColorControlsDisabled(false);
         setStatus(event.data.message || 'The palettes contain an invalid hexadecimal color.', true);
@@ -1041,7 +1192,13 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
         await colorPanel?.webview.postMessage({ type: 'saveError', message });
         return;
       }
-      await colorPanel?.webview.postMessage({ type: 'saved' });
+      const legacyOverrides = legacyColorOverrideCount();
+      await colorPanel?.webview.postMessage({
+        type: 'saved',
+        message: legacyOverrides > 0
+          ? `Colors saved. ${legacyOverrides} native per-color override${legacyOverrides === 1 ? '' : 's'} still take precedence for the dark palette.`
+          : undefined
+      });
     } else if (message?.type === 'diagnosticUpdate' || message?.type === 'diagnosticReset') {
       const definition = diagnosticSettingDefinitions.find(candidate => candidate.key === message.key);
       const scope = message.scope === 'workspace' ? 'workspace' : message.scope === 'user' ? 'user' : undefined;
