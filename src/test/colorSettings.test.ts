@@ -6,8 +6,10 @@ import {
   persistPalettes,
   removeAllHelperColors,
   TextMateRule,
+  themePaletteTargets,
   themeSelectorForKind,
   TokenColorCustomizations,
+  updateCustomizationTargets,
   updateCustomizationValue,
   validateSubmittedPalettes
 } from '../colorSettings';
@@ -46,6 +48,18 @@ suite('KRL syntax color configuration', () => {
       }),
       '[Static Theme]'
     );
+
+    const targets = themePaletteTargets(configuration, {
+      'Static Theme': 'dark',
+      'Automatic Dark': 'dark',
+      'Automatic Light': 'light',
+      'Automatic High Contrast': 'dark',
+      'Automatic High Contrast Light': 'light'
+    }, '[Automatic High Contrast]', 'dark');
+    assert.ok(targets.some(target => target.selector === '[Static Theme]' && target.palette === 'dark'));
+    assert.ok(targets.some(target =>
+      target.selector === '[Automatic High Contrast]' && target.palette === 'dark'
+    ));
   });
 
   test('replaces active helper colors while preserving a different single-theme palette', () => {
@@ -88,6 +102,35 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(helperRulesAt(lightAgain).length, 0);
     assert.strictEqual(helperRulesAt(lightAgain, '[Light Test Theme]').length, 19);
     assert.strictEqual(helperRulesAt(lightAgain, '[Dark Test Theme]').length, 19);
+  });
+
+  test('builds one deterministic customization containing all configured theme palettes', () => {
+    const targets = [
+      { selector: '[Dark Test Theme]', palette: 'dark' as const },
+      { selector: '[Light Test Theme]', palette: 'light' as const }
+    ];
+    const updated = updateCustomizationTargets({}, true, targets);
+
+    assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
+    assert.strictEqual(helperForeground(updated, '[Light Test Theme]', 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), undefined);
+  });
+
+  test('converges concurrent windows while preserving their distinct theme selectors', () => {
+    const firstWindowTargets = [
+      { selector: '[First Dark Theme]', palette: 'dark' as const },
+      { selector: '[Shared Light Theme]', palette: 'light' as const }
+    ];
+    const secondWindowTargets = [
+      { selector: '[Second Dark Theme]', palette: 'dark' as const },
+      { selector: '[Shared Light Theme]', palette: 'light' as const }
+    ];
+    const staleSecondWrite = updateCustomizationTargets({}, true, secondWindowTargets);
+    const reconciled = updateCustomizationTargets(staleSecondWrite, true, firstWindowTargets);
+
+    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme]').length, 19);
+    assert.deepStrictEqual(updateCustomizationTargets(reconciled, true, secondWindowTargets), reconciled);
   });
 
   test('synchronizing the same theme repeatedly is idempotent', () => {
@@ -287,6 +330,7 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('data-color-input data-palette="light" data-key="normalText" data-default="#000000"'));
     assert.ok(html.includes('Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.'));
     assert.ok(html.includes("event.data.type === 'saveError'"));
+    assert.ok(html.includes("event.data.type === 'palettesState'"));
     assert.ok(html.includes('data-key="localVariablePrefixes"'));
     assert.ok(html.includes('<option value="user"'));
     assert.ok(html.includes('<option value="workspace"'));
