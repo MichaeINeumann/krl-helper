@@ -24,6 +24,7 @@ export interface KrlVariableReference {
 const declarationQualifiers = new Set([
   'const', 'static', 'public', 'private', 'extern', 'global', 'decl', 'in', 'out', 'inout'
 ]);
+const typeDefinitionKeywords = new Set(['enum', 'struc']);
 const implicitDeclarationTypes = [
   'BOOL', 'CHAR', 'INT', 'REAL', 'AXIS', 'E6AXIS', 'FRAME', 'POS', 'E6POS'
 ] as const;
@@ -125,6 +126,9 @@ function parseVariableLine(
       leadingIdentifier = /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(line.slice(cursor));
     }
     if (!leadingIdentifier) {
+      return [];
+    }
+    if (typeDefinitionKeywords.has(leadingIdentifier[1].toLowerCase())) {
       return [];
     }
     // Skip the KRL or user-defined type after DECL/GLOBAL.

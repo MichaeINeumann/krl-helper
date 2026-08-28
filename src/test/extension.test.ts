@@ -469,6 +469,7 @@ suite('KRL Helper', () => {
       '  advanceStop(bAdvanceStop)',
       '  n_Counter = 1',
       '  bFreshGlobal = TRUE',
+      '  b_Status = TRUE',
       '  bStillMissing = TRUE',
       'END',
       ''
@@ -477,6 +478,7 @@ suite('KRL Helper', () => {
       'DEFDAT LegacyGlobal PUBLIC',
       'GLOBAL BOOL bAdvanceStop=TRUE',
       'GLOBAL DECL INT n_Counter',
+      'GLOBAL STRUC b_Status BOOL bReady',
       'ENDDAT',
       ''
     ].join('\n')));
@@ -489,6 +491,7 @@ suite('KRL Helper', () => {
       );
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'n_Counter'")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'b_Status'")));
       assert.ok(diagnostics.some(diagnostic => diagnostic.message ===
         "Variable 'bStillMissing' is not declared in the current module or visible project globals."
       ));
@@ -508,6 +511,12 @@ suite('KRL Helper', () => {
       assert.ok(alternateDefinitions.some(definition =>
         definition.uri.toString() === globalUri.toString() && definition.range.start.line === 2
       ));
+
+      const typePosition = document.positionAt(lastIdentifierOffset(document.getText(), 'b_Status'));
+      const typeDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider', sourceUri, typePosition
+      );
+      assert.ok(!typeDefinitions || typeDefinitions.length === 0);
 
       await vscode.workspace.fs.writeFile(freshGlobalUri, Buffer.from([
         'DEFDAT FreshGlobal PUBLIC',
@@ -574,6 +583,106 @@ suite('KRL Helper', () => {
         document.positionAt(lastIdentifierOffset(document.getText(), 'bRemoteConfig'))
       );
       assert.ok(!remoteDefinitions || remoteDefinitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(containerUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('restricts inferred-project configs to the current KRC R1 tree', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const projectUri = vscode.Uri.joinPath(workspaceFolder.uri, `inferred-config-${Date.now()}`);
+    const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'standalone.src');
+    const canonicalConfigUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', '$config.dat');
+    const shallowConfigUri = vscode.Uri.joinPath(projectUri, 'KRC', '$config.dat');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program'));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF Standalone()',
+      '  bCanonicalConfig = TRUE',
+      '  bShallowConfig = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(canonicalConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bCanonicalConfig\nENDDAT\n'
+    ));
+    await vscode.workspace.fs.writeFile(shallowConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bShallowConfig\nENDDAT\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bShallowConfig'"))
+      );
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bCanonicalConfig'")));
+
+      const canonicalDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bCanonicalConfig'))
+      );
+      assert.ok(canonicalDefinitions.some(definition => definition.uri.toString() === canonicalConfigUri.toString()));
+
+      const shallowDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bShallowConfig'))
+      );
+      assert.ok(!shallowDefinitions || shallowDefinitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('considers the nearest config after more than 50 unrelated configs', async function () {
+    this.timeout(10000);
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const containerUri = vscode.Uri.joinPath(workspaceFolder.uri, `many-configs-${Date.now()}`);
+    const targetUri = vscode.Uri.joinPath(containerUri, 'a-target');
+    const sourceUri = vscode.Uri.joinPath(targetUri, 'standalone.src');
+    const canonicalConfigUri = vscode.Uri.joinPath(targetUri, 'KRC', 'R1', 'System', '$config.dat');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(targetUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(
+      'DEF Standalone()\n  bCanonicalConfig = TRUE\n  bStillMissing = TRUE\nEND\n'
+    ));
+    await vscode.workspace.fs.writeFile(canonicalConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bCanonicalConfig\nENDDAT\n'
+    ));
+    await Promise.all(Array.from({ length: 55 }, async (_, index) => {
+      const decoyUri = vscode.Uri.joinPath(
+        containerUri,
+        `z-decoy-${String(index).padStart(2, '0')}`,
+        'nested',
+        'remote',
+        'config'
+      );
+      await vscode.workspace.fs.createDirectory(decoyUri);
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.joinPath(decoyUri, '$config.dat'),
+        Buffer.from('DEFDAT $CONFIG\nENDDAT\n')
+      );
+    }));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bStillMissing'"))
+      );
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bCanonicalConfig'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bCanonicalConfig'))
+      );
+      assert.ok(definitions.some(definition => definition.uri.toString() === canonicalConfigUri.toString()));
     } finally {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await vscode.workspace.fs.delete(containerUri, { recursive: true, useTrash: false });

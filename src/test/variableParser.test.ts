@@ -40,6 +40,19 @@ suite('KRL variable parser', () => {
     );
   });
 
+  test('does not parse GLOBAL type definitions as variables', () => {
+    const declarations = parseKrlVariableDeclarations([
+      'GLOBAL STRUC b_Status BOOL bReady',
+      'GLOBAL ENUM n_Mode #IDLE, #ACTIVE',
+      'GLOBAL BOOL bActualVariable'
+    ].join('\n'));
+
+    assert.deepStrictEqual(
+      declarations.map(declaration => declaration.normalizedName),
+      ['bactualvariable']
+    );
+  });
+
   test('finds variable references but excludes calls, members, system variables, and comments', () => {
     const source = [
       'bLocal = structValue.member',

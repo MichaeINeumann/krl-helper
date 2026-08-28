@@ -51,7 +51,6 @@ const projectDeclarationCache = new Map<string, ProjectDeclarationIndex>();
 const projectDeclarationBuilds = new Map<string, Promise<ProjectDeclarationIndex>>();
 const projectDeclarationRevisions = new Map<string, number>();
 
-const maxConfigCandidates = 50;
 const workspaceScanTtlMs = 5000;
 const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
 const ignoredIdentifiers = new Set([
@@ -651,7 +650,8 @@ function findCompanionDat(sourcePath: string): string | null {
 }
 
 function findConfigDat(sourcePath: string): string | null {
-  const candidates = getConfigCandidates();
+  const krlTreeRoot = findKrlTreeRoot(sourcePath);
+  const candidates = krlTreeRoot ? scanConfigPaths(krlTreeRoot) : getConfigCandidates();
   const projectRoot = findProjectRoot(sourcePath);
   if (projectRoot) {
     const projectConfig = findProjectConfigDat(projectRoot);
@@ -693,6 +693,11 @@ function matchesFileSystemEntry(entryPath: string, expectFile: boolean): boolean
 }
 
 function findProjectRoot(filePath: string): string | null {
+  const krlTreeRoot = findKrlTreeRoot(filePath);
+  return krlTreeRoot ? path.dirname(path.dirname(krlTreeRoot)) : null;
+}
+
+function findKrlTreeRoot(filePath: string): string | null {
   const normalized = path.normalize(filePath);
   const parsed = path.parse(normalized);
   const parts = normalized.slice(parsed.root.length).split(path.sep).filter(part => part.length > 0);
@@ -704,7 +709,7 @@ function findProjectRoot(filePath: string): string | null {
     }
   }
   if (krcIndex !== -1) {
-    return path.join(parsed.root, ...parts.slice(0, krcIndex));
+    return path.join(parsed.root, ...parts.slice(0, krcIndex + 2));
   }
   return null;
 }
@@ -715,22 +720,19 @@ function getConfigCandidates(): string[] {
   for (const workspaceRoot of workspaceRoots) {
     let scan = workspaceScanCache.get(workspaceRoot);
     if (!scan || now - scan.lastScanMs > workspaceScanTtlMs) {
-      const configs: string[] = [];
-      scanWorkspaceForConfigs(workspaceRoot, configs);
+      const configs = scanConfigPaths(workspaceRoot);
       scan = { lastScanMs: now, configs };
       workspaceScanCache.set(workspaceRoot, scan);
     }
     for (const candidate of scan.configs) {
       candidates.push(candidate);
-      if (candidates.length >= maxConfigCandidates) {
-        return candidates;
-      }
     }
   }
   return candidates;
 }
 
-function scanWorkspaceForConfigs(root: string, configs: string[]): void {
+function scanConfigPaths(root: string): string[] {
+  const configs: string[] = [];
   const directories = [root];
   while (directories.length > 0) {
     const directory = directories.pop();
@@ -746,7 +748,7 @@ function scanWorkspaceForConfigs(root: string, configs: string[]): void {
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name)) {
+        if (!ignoredDirectories.has(entry.name.toLowerCase())) {
           directories.push(path.join(directory, entry.name));
         }
         continue;
@@ -755,11 +757,9 @@ function scanWorkspaceForConfigs(root: string, configs: string[]): void {
         continue;
       }
       configs.push(path.join(directory, entry.name));
-      if (configs.length >= maxConfigCandidates) {
-        return;
-      }
     }
   }
+  return configs;
 }
 
 function pathDistance(leftPath: string, rightPath: string): number {

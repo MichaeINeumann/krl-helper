@@ -64,7 +64,9 @@ suite('KRL diagnostic model', () => {
       'DECL BOOL b_NotGlobal',
       'decl global int n_Visible',
       'GLOBAL BOOL bLegacyVisible',
-      'GLOBAL DECL INT n_AlternateVisible'
+      'GLOBAL DECL INT n_AlternateVisible',
+      'GLOBAL STRUC b_Status BOOL bReady',
+      'GLOBAL ENUM n_Mode #IDLE, #ACTIVE'
     ].join('\n');
     const privateDat = [
       'DEFDAT Shared',
