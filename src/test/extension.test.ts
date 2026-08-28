@@ -589,6 +589,45 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('keeps a declaration-free nearest config authoritative for navigation', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const containerUri = vscode.Uri.joinPath(workspaceFolder.uri, `empty-nearest-config-${Date.now()}`);
+    const nearbyRootUri = vscode.Uri.joinPath(containerUri, 'nearby');
+    const remoteRootUri = vscode.Uri.joinPath(containerUri, 'remote');
+    const sourceUri = vscode.Uri.joinPath(nearbyRootUri, 'standalone.src');
+    const nearbyConfigUri = vscode.Uri.joinPath(nearbyRootUri, '$config.dat');
+    const remoteConfigUri = vscode.Uri.joinPath(remoteRootUri, '$config.dat');
+    await vscode.workspace.fs.createDirectory(nearbyRootUri);
+    await vscode.workspace.fs.createDirectory(remoteRootUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(
+      'DEF Standalone()\n  bMaskedConfig = TRUE\nEND\n'
+    ));
+    await vscode.workspace.fs.writeFile(nearbyConfigUri, Buffer.from('DEFDAT $CONFIG\nENDDAT\n'));
+    await vscode.workspace.fs.writeFile(remoteConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bMaskedConfig\nENDDAT\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bMaskedConfig'"))
+      );
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bMaskedConfig'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bMaskedConfig'))
+      );
+      assert.ok(!definitions || definitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(containerUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('restricts inferred-project configs to the current KRC R1 tree', async () => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(workspaceFolder);
@@ -596,12 +635,14 @@ suite('KRL Helper', () => {
     const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'standalone.src');
     const canonicalConfigUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', '$config.dat');
     const shallowConfigUri = vscode.Uri.joinPath(projectUri, 'KRC', '$config.dat');
+    const outsideGlobalUri = vscode.Uri.joinPath(projectUri, 'shared.dat');
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program'));
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
       'DEF Standalone()',
       '  bCanonicalConfig = TRUE',
       '  bShallowConfig = TRUE',
+      '  bOutsideR1 = TRUE',
       'END',
       ''
     ].join('\n')));
@@ -611,14 +652,19 @@ suite('KRL Helper', () => {
     await vscode.workspace.fs.writeFile(shallowConfigUri, Buffer.from(
       'DEFDAT $CONFIG\nDECL BOOL bShallowConfig\nENDDAT\n'
     ));
+    await vscode.workspace.fs.writeFile(outsideGlobalUri, Buffer.from(
+      'DEFDAT Shared PUBLIC\nGLOBAL BOOL bOutsideR1\nENDDAT\n'
+    ));
 
     try {
       const document = await vscode.workspace.openTextDocument(sourceUri);
       await vscode.window.showTextDocument(document);
       const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
         values.some(diagnostic => diagnostic.message.includes("'bShallowConfig'"))
+          && values.some(diagnostic => diagnostic.message.includes("'bOutsideR1'"))
       );
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bCanonicalConfig'")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bOutsideR1'")));
 
       const canonicalDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
         'vscode.executeDefinitionProvider',
@@ -633,6 +679,13 @@ suite('KRL Helper', () => {
         document.positionAt(lastIdentifierOffset(document.getText(), 'bShallowConfig'))
       );
       assert.ok(!shallowDefinitions || shallowDefinitions.length === 0);
+
+      const outsideDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bOutsideR1'))
+      );
+      assert.ok(!outsideDefinitions || outsideDefinitions.length === 0);
     } finally {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
@@ -776,18 +829,19 @@ suite('KRL Helper', () => {
     }
   });
 
-  test('discovers a standalone project config through a symbolic-link directory', async function () {
+  test('discovers $config.dat through a symbolic-link directory', async function () {
     if (process.platform === 'win32') {
       this.skip();
     }
     const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `symlink-config-${Date.now()}`));
-    const actualKrcUri = vscode.Uri.joinPath(projectUri, 'actual-krc');
-    const linkedKrcUri = vscode.Uri.joinPath(projectUri, 'KRC');
-    const sourceUri = vscode.Uri.joinPath(linkedKrcUri, 'R1', 'Program', 'standalone.src');
-    const configUri = vscode.Uri.joinPath(linkedKrcUri, 'R1', 'System', '$config.dat');
-    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(actualKrcUri, 'R1', 'Program'));
-    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(actualKrcUri, 'R1', 'System'));
-    await fs.promises.symlink(actualKrcUri.fsPath, linkedKrcUri.fsPath, 'dir');
+    const programUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program');
+    const actualSystemUri = vscode.Uri.joinPath(projectUri, 'linked-system-target');
+    const linkedSystemUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System');
+    const sourceUri = vscode.Uri.joinPath(programUri, 'standalone.src');
+    const configUri = vscode.Uri.joinPath(linkedSystemUri, '$config.dat');
+    await vscode.workspace.fs.createDirectory(programUri);
+    await vscode.workspace.fs.createDirectory(actualSystemUri);
+    await fs.promises.symlink(actualSystemUri.fsPath, linkedSystemUri.fsPath, 'dir');
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
       'DEF Standalone()',
       '  bLinkedConfig = TRUE',

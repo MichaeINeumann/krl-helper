@@ -27,7 +27,7 @@ interface DependencyState {
   paths: Set<string>;
 }
 
-interface WorkspaceScan {
+interface ConfigScan {
   lastScanMs: number;
   configs: string[];
 }
@@ -46,12 +46,12 @@ const configNameCache = new Map<string, CachedNames>();
 const dependencyState = new Map<string, DependencyState>();
 const dependentsByPath = new Map<string, Set<string>>();
 const fileWatchers = new Map<string, fs.FSWatcher>();
-const workspaceScanCache = new Map<string, WorkspaceScan>();
+const configScanCache = new Map<string, ConfigScan>();
 const projectDeclarationCache = new Map<string, ProjectDeclarationIndex>();
 const projectDeclarationBuilds = new Map<string, Promise<ProjectDeclarationIndex>>();
 const projectDeclarationRevisions = new Map<string, number>();
 
-const workspaceScanTtlMs = 5000;
+const configScanTtlMs = 5000;
 const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
 const ignoredIdentifiers = new Set([
   'def', 'deffct', 'defdat', 'end', 'endfct', 'enddat', 'global', 'decl',
@@ -125,7 +125,7 @@ export function initializeDiagnostics(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       refreshWorkspaceRoots();
-      workspaceScanCache.clear();
+      configScanCache.clear();
       projectDeclarationCache.clear();
       projectDeclarationBuilds.clear();
       projectDeclarationRevisions.clear();
@@ -299,7 +299,7 @@ function handleDependencyChange(filePath: string, eventType: string): void {
       watcher.close();
       fileWatchers.delete(filePath);
     }
-    workspaceScanCache.clear();
+    configScanCache.clear();
   }
 
   const dependents = dependentsByPath.get(filePath);
@@ -320,7 +320,7 @@ function handleProjectFileChange(filePath: string): void {
   }
   fileCache.delete(filePath);
   configNameCache.delete(filePath);
-  workspaceScanCache.clear();
+  configScanCache.clear();
   invalidateProjectIndexForPath(filePath);
   scheduleProjectDocumentsForPath(filePath);
 }
@@ -361,12 +361,12 @@ function findDeclarationProjectRoot(sourcePath: string, document: vscode.TextDoc
   const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
     ?? workspaceRoots.find(root => isPathInside(sourcePath, root))
     ?? null;
-  const krcProjectRoot = findProjectRoot(sourcePath);
+  const krlTreeRoot = findKrlTreeRoot(sourcePath);
 
-  if (krcProjectRoot && (!workspaceRoot || isPathInside(krcProjectRoot, workspaceRoot))) {
-    return krcProjectRoot;
+  if (krlTreeRoot && (!workspaceRoot || isPathInside(krlTreeRoot, workspaceRoot))) {
+    return krlTreeRoot;
   }
-  return workspaceRoot ?? krcProjectRoot;
+  return workspaceRoot ?? krlTreeRoot;
 }
 
 async function getProjectDeclarations(root: string): Promise<ProjectDeclarationIndex> {
@@ -421,30 +421,49 @@ async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclar
 
 async function scanProjectDeclarationFiles(root: string): Promise<string[]> {
   const files: string[] = [];
-  const directories = [root];
+  const directories = [{ path: root, ancestorRealPaths: new Set<string>() }];
   while (directories.length > 0) {
-    const directory = directories.pop();
-    if (!directory) {
+    const pending = directories.pop();
+    if (!pending) {
       continue;
     }
+    const directory = pending.path;
+    let realDirectory: string;
     let entries: fs.Dirent[];
     try {
+      realDirectory = normalizePathKey(await fs.promises.realpath(directory));
+      if (pending.ancestorRealPaths.has(realDirectory)) {
+        continue;
+      }
       entries = await fs.promises.readdir(directory, { withFileTypes: true });
     } catch {
       continue;
     }
+    const ancestorRealPaths = new Set(pending.ancestorRealPaths);
+    ancestorRealPaths.add(realDirectory);
 
     for (const entry of entries) {
-      if (entry.isDirectory()) {
+      const entryPath = path.join(directory, entry.name);
+      let directoryEntry = entry.isDirectory();
+      let fileEntry = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const stats = await fs.promises.stat(entryPath);
+          directoryEntry = stats.isDirectory();
+          fileEntry = stats.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (directoryEntry) {
         if (!ignoredDirectories.has(entry.name.toLowerCase())) {
-          directories.push(path.join(directory, entry.name));
+          directories.push({ path: entryPath, ancestorRealPaths });
         }
         continue;
       }
-      if (entry.isFile()) {
-        const filePath = path.join(directory, entry.name);
-        if (isProjectDeclarationFile(filePath)) {
-          files.push(filePath);
+      if (fileEntry) {
+        if (isProjectDeclarationFile(entryPath)) {
+          files.push(entryPath);
         }
       }
     }
@@ -651,7 +670,7 @@ function findCompanionDat(sourcePath: string): string | null {
 
 function findConfigDat(sourcePath: string): string | null {
   const krlTreeRoot = findKrlTreeRoot(sourcePath);
-  const candidates = krlTreeRoot ? scanConfigPaths(krlTreeRoot) : getConfigCandidates();
+  const candidates = krlTreeRoot ? getCachedConfigPaths(krlTreeRoot) : getConfigCandidates();
   const projectRoot = findProjectRoot(sourcePath);
   if (projectRoot) {
     const projectConfig = findProjectConfigDat(projectRoot);
@@ -715,48 +734,72 @@ function findKrlTreeRoot(filePath: string): string | null {
 }
 
 function getConfigCandidates(): string[] {
-  const now = Date.now();
   const candidates: string[] = [];
   for (const workspaceRoot of workspaceRoots) {
-    let scan = workspaceScanCache.get(workspaceRoot);
-    if (!scan || now - scan.lastScanMs > workspaceScanTtlMs) {
-      const configs = scanConfigPaths(workspaceRoot);
-      scan = { lastScanMs: now, configs };
-      workspaceScanCache.set(workspaceRoot, scan);
-    }
-    for (const candidate of scan.configs) {
+    for (const candidate of getCachedConfigPaths(workspaceRoot)) {
       candidates.push(candidate);
     }
   }
   return candidates;
 }
 
+function getCachedConfigPaths(root: string): string[] {
+  const key = normalizePathKey(root);
+  const now = Date.now();
+  let scan = configScanCache.get(key);
+  if (!scan || now - scan.lastScanMs > configScanTtlMs) {
+    scan = { lastScanMs: now, configs: scanConfigPaths(root) };
+    configScanCache.set(key, scan);
+  }
+  return [...scan.configs];
+}
+
 function scanConfigPaths(root: string): string[] {
   const configs: string[] = [];
-  const directories = [root];
+  const directories = [{ path: root, ancestorRealPaths: new Set<string>() }];
   while (directories.length > 0) {
-    const directory = directories.pop();
-    if (!directory) {
+    const pending = directories.pop();
+    if (!pending) {
       continue;
     }
+    const directory = pending.path;
+    let realDirectory: string;
     let entries: fs.Dirent[];
     try {
+      realDirectory = normalizePathKey(fs.realpathSync(directory));
+      if (pending.ancestorRealPaths.has(realDirectory)) {
+        continue;
+      }
       entries = fs.readdirSync(directory, { withFileTypes: true });
     } catch {
       continue;
     }
+    const ancestorRealPaths = new Set(pending.ancestorRealPaths);
+    ancestorRealPaths.add(realDirectory);
 
     for (const entry of entries) {
-      if (entry.isDirectory()) {
+      const entryPath = path.join(directory, entry.name);
+      let directoryEntry = entry.isDirectory();
+      let fileEntry = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const stats = fs.statSync(entryPath);
+          directoryEntry = stats.isDirectory();
+          fileEntry = stats.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (directoryEntry) {
         if (!ignoredDirectories.has(entry.name.toLowerCase())) {
-          directories.push(path.join(directory, entry.name));
+          directories.push({ path: entryPath, ancestorRealPaths });
         }
         continue;
       }
-      if (!entry.isFile() || entry.name.toLowerCase() !== '$config.dat') {
+      if (!fileEntry || entry.name.toLowerCase() !== '$config.dat') {
         continue;
       }
-      configs.push(path.join(directory, entry.name));
+      configs.push(entryPath);
     }
   }
   return configs;

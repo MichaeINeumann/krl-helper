@@ -37,7 +37,12 @@ interface KrlRoutineRange {
 
 interface CachedProjectVariables {
   revision: number;
-  promise: Promise<IndexedKrlVariable[]>;
+  promise: Promise<ProjectVariableIndex>;
+}
+
+interface ProjectVariableIndex {
+  definitions: IndexedKrlVariable[];
+  configPaths: string[];
 }
 
 const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
@@ -128,9 +133,13 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     const currentDefinitions = indexDocument(document);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
     const projectRoot = inferKrlProjectRoot(document.uri) ?? workspaceFolder?.uri.fsPath;
-    const projectDefinitions = projectRoot
+    const projectIndex = projectRoot
       ? await this.projectVariables(projectRoot)
-      : await siblingCompanionVariables(document);
+      : {
+        definitions: await siblingCompanionVariables(document),
+        configPaths: []
+      };
+    const projectDefinitions = projectIndex.definitions;
     const foreignDefinitions = projectDefinitions.filter(definition => definition.sourceId !== currentSourceId);
     const indexedDefinitions = [...currentDefinitions, ...foreignDefinitions];
     const allDefinitions = indexedDefinitions.filter(definition => definition.normalizedName === normalizedName);
@@ -144,7 +153,11 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
       }
       return !currentRoutine || definition.routineStartOffset === currentRoutine.startOffset;
     });
-    const globalDefinitions = selectGlobalDefinitions(document.uri, allDefinitions, indexedDefinitions);
+    const globalDefinitions = selectGlobalDefinitions(
+      document.uri,
+      allDefinitions,
+      projectIndex.configPaths
+    );
     const scope = classifyVariable(identifier, readPrefixConfiguration());
     const visible = scope === 'local'
       ? localDefinitions.length > 0 ? localDefinitions : globalDefinitions
@@ -154,7 +167,7 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     return deduplicateDefinitions(visible);
   }
 
-  private projectVariables(root: string): Promise<IndexedKrlVariable[]> {
+  private projectVariables(root: string): Promise<ProjectVariableIndex> {
     if (!vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root))) {
       return this.buildProjectVariables(root);
     }
@@ -168,9 +181,10 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     return promise;
   }
 
-  private async buildProjectVariables(root: string): Promise<IndexedKrlVariable[]> {
+  private async buildProjectVariables(root: string): Promise<ProjectVariableIndex> {
     const definitions: IndexedKrlVariable[] = [];
-    for (const filePath of await scanProjectFiles(root)) {
+    const files = await scanProjectFiles(root);
+    for (const filePath of files) {
       const uri = vscode.Uri.file(filePath);
       const openDocument = vscode.workspace.textDocuments.find(document =>
         document.uri.scheme === 'file' && normalizePath(document.uri.fsPath) === normalizePath(filePath)
@@ -183,7 +197,10 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
       }
       definitions.push(...indexText(fileText, uri));
     }
-    return definitions;
+    return {
+      definitions,
+      configPaths: files.filter(filePath => path.basename(filePath).toLowerCase() === '$config.dat')
+    };
   }
 }
 
@@ -246,10 +263,9 @@ function isCompanionDefinition(currentUri: vscode.Uri, definition: IndexedKrlVar
 function selectGlobalDefinitions(
   currentUri: vscode.Uri,
   definitions: IndexedKrlVariable[],
-  projectDefinitions: IndexedKrlVariable[]
+  configPaths: string[]
 ): IndexedKrlVariable[] {
-  const configDefinitions = projectDefinitions.filter(definition => definition.configDat);
-  const nearestConfigId = selectNearestConfigId(currentUri, configDefinitions);
+  const nearestConfigId = selectNearestConfigId(currentUri, configPaths);
   return definitions.filter(definition => {
     if (definition.fileKind === 'source') {
       return isExplicitProjectGlobalDeclaration(definition);
@@ -266,29 +282,24 @@ function selectGlobalDefinitions(
 
 function selectNearestConfigId(
   currentUri: vscode.Uri,
-  definitions: IndexedKrlVariable[]
+  configPaths: string[]
 ): string | undefined {
-  const configIds = [...new Set(definitions.map(definition => definition.sourceId))];
-  if (configIds.length === 0) {
+  if (configPaths.length === 0) {
     return undefined;
   }
   if (currentUri.scheme !== 'file') {
-    return configIds[0];
+    return normalizePath(configPaths[0]);
   }
-  let nearestId = configIds[0];
-  let nearestDistance = pathDistance(currentUri.fsPath, configPathForId(nearestId, definitions));
-  for (const configId of configIds.slice(1)) {
-    const distance = pathDistance(currentUri.fsPath, configPathForId(configId, definitions));
+  let nearestPath = configPaths[0];
+  let nearestDistance = pathDistance(currentUri.fsPath, nearestPath);
+  for (const configPath of configPaths.slice(1)) {
+    const distance = pathDistance(currentUri.fsPath, configPath);
     if (distance < nearestDistance) {
-      nearestId = configId;
+      nearestPath = configPath;
       nearestDistance = distance;
     }
   }
-  return nearestId;
-}
-
-function configPathForId(sourceId: string, definitions: IndexedKrlVariable[]): string {
-  return definitions.find(definition => definition.sourceId === sourceId)?.uri.fsPath ?? sourceId;
+  return normalizePath(nearestPath);
 }
 
 function deduplicateDefinitions(definitions: IndexedKrlVariable[]): IndexedKrlVariable[] {
@@ -377,25 +388,45 @@ function inferKrlProjectRoot(uri: vscode.Uri): string | undefined {
 
 async function scanProjectFiles(root: string): Promise<string[]> {
   const files: string[] = [];
-  const directories = [root];
+  const directories = [{ path: root, ancestorRealPaths: new Set<string>() }];
   while (directories.length > 0) {
-    const directory = directories.pop();
-    if (!directory) {
+    const pending = directories.pop();
+    if (!pending) {
       continue;
     }
+    const directory = pending.path;
+    let realDirectory: string;
     let entries: fs.Dirent[];
     try {
+      realDirectory = normalizePath(await fs.promises.realpath(directory));
+      if (pending.ancestorRealPaths.has(realDirectory)) {
+        continue;
+      }
       entries = await fs.promises.readdir(directory, { withFileTypes: true });
     } catch {
       continue;
     }
+    const ancestorRealPaths = new Set(pending.ancestorRealPaths);
+    ancestorRealPaths.add(realDirectory);
     for (const entry of entries) {
-      if (entry.isDirectory()) {
-        if (!ignoredDirectories.has(entry.name.toLowerCase())) {
-          directories.push(path.join(directory, entry.name));
+      const entryPath = path.join(directory, entry.name);
+      let directoryEntry = entry.isDirectory();
+      let fileEntry = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const stats = await fs.promises.stat(entryPath);
+          directoryEntry = stats.isDirectory();
+          fileEntry = stats.isFile();
+        } catch {
+          continue;
         }
-      } else if (entry.isFile() && /\.(?:src|sub|dat)$/i.test(entry.name)) {
-        files.push(path.join(directory, entry.name));
+      }
+      if (directoryEntry) {
+        if (!ignoredDirectories.has(entry.name.toLowerCase())) {
+          directories.push({ path: entryPath, ancestorRealPaths });
+        }
+      } else if (fileEntry && /\.(?:src|sub|dat)$/i.test(entry.name)) {
+        files.push(entryPath);
       }
     }
   }
