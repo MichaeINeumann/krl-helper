@@ -409,6 +409,10 @@ async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclar
     }
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.dat') {
+      // The nearest $config.dat is added separately for the source being analyzed.
+      if (path.basename(filePath).toLowerCase() === '$config.dat') {
+        continue;
+      }
       collectProjectDatDeclarations(filePath, text, names);
     } else {
       collectGlobalSourceDeclarations(text, names);

@@ -527,6 +527,58 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('uses only the nearest $config.dat for standalone source globals', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const containerUri = vscode.Uri.joinPath(workspaceFolder.uri, `nearest-config-${Date.now()}`);
+    const firstRootUri = vscode.Uri.joinPath(containerUri, 'first-project');
+    const secondRootUri = vscode.Uri.joinPath(containerUri, 'second-project');
+    const sourceUri = vscode.Uri.joinPath(firstRootUri, 'standalone.src');
+    const firstConfigUri = vscode.Uri.joinPath(firstRootUri, 'KRC', 'R1', 'System', '$config.dat');
+    const secondConfigUri = vscode.Uri.joinPath(secondRootUri, 'KRC', 'R1', 'System', '$config.dat');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(firstRootUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(secondRootUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF Standalone()',
+      '  bNearestConfig = TRUE',
+      '  bRemoteConfig = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(firstConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bNearestConfig\nENDDAT\n'
+    ));
+    await vscode.workspace.fs.writeFile(secondConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bRemoteConfig\nENDDAT\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bRemoteConfig'"))
+      );
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bNearestConfig'")));
+
+      const nearestDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bNearestConfig'))
+      );
+      assert.ok(nearestDefinitions.some(definition => definition.uri.toString() === firstConfigUri.toString()));
+
+      const remoteDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bRemoteConfig'))
+      );
+      assert.ok(!remoteDefinitions || remoteDefinitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(containerUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('excludes directives, KRL keywords, and I/O aliases from generic prefix diagnostics', async () => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(workspaceFolder);
