@@ -2,7 +2,9 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   colorSettingsHtml,
+  CompletePalettes,
   hasTopLevelHelperColors,
+  managedConfigurationLayer,
   persistPalettes,
   removeAllHelperColors,
   TextMateRule,
@@ -133,6 +135,22 @@ suite('KRL syntax color configuration', () => {
     assert.deepStrictEqual(updateCustomizationTargets(reconciled, true, secondWindowTargets), reconciled);
   });
 
+  test('stores managed colors in the workspace layer when a workspace is open', () => {
+    const globalValue = updateCustomizationTargets({}, true, [
+      { selector: '[Global Theme]', palette: 'dark' }
+    ]);
+    const workspaceValue: TokenColorCustomizations = {
+      textMateRules: [{ scope: 'source.other', settings: { foreground: '#123456' } }]
+    };
+
+    const layer = managedConfigurationLayer({ globalValue, workspaceValue }, true);
+    const disabled = updateCustomizationTargets(layer.value, false, []);
+
+    assert.strictEqual(layer.target, vscode.ConfigurationTarget.Workspace);
+    assert.deepStrictEqual(layer.value, workspaceValue);
+    assert.strictEqual(helperRulesAt(disabled).length, 0);
+  });
+
   test('synchronizing the same theme repeatedly is idempotent', () => {
     const firstUpdate = updateCustomizationValue({}, true, '[Light Test Theme]', 'light');
     const secondUpdate = updateCustomizationValue(firstUpdate, true, '[Light Test Theme]', 'light');
@@ -210,32 +228,36 @@ suite('KRL syntax color configuration', () => {
   });
 
   test('reads update-stable palettes from VS Code user configuration', async () => {
-    const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
-    const previousValue = configuration.inspect<Record<string, string>>('dark')?.globalValue;
+    const configuration = vscode.workspace.getConfiguration('krlHighlighting');
+    const previousValue = configuration.inspect<CompletePalettes>('palettes')?.globalValue;
 
     try {
-      await configuration.update('dark', { normalText: '#123456' }, vscode.ConfigurationTarget.Global);
+      await configuration.update('palettes', {
+        dark: { normalText: '#123456' },
+        light: {}
+      }, vscode.ConfigurationTarget.Global);
       const updated = updateCustomizationValue({}, true, '[Dark Test Theme]', 'dark');
 
       assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), undefined);
       assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#123456');
     } finally {
-      await configuration.update('dark', previousValue, vscode.ConfigurationTarget.Global);
+      await configuration.update('palettes', previousValue, vscode.ConfigurationTarget.Global);
     }
   });
 
   test('keeps distinct user-selected comment colors across dark and light theme synchronization', async () => {
-    const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
-    const previousDark = configuration.inspect<Record<string, string>>('dark')?.globalValue;
-    const previousLight = configuration.inspect<Record<string, string>>('light')?.globalValue;
+    const configuration = vscode.workspace.getConfiguration('krlHighlighting');
+    const previousValue = configuration.inspect<CompletePalettes>('palettes')?.globalValue;
     const darkPalette = completePalettes('#112233').dark;
     const lightPalette = completePalettes('#DDEEFF').light;
     darkPalette.comments = '#FFFF00';
     lightPalette.comments = '#FF0000';
 
     try {
-      await configuration.update('dark', darkPalette, vscode.ConfigurationTarget.Global);
-      await configuration.update('light', lightPalette, vscode.ConfigurationTarget.Global);
+      await configuration.update('palettes', {
+        dark: darkPalette,
+        light: lightPalette
+      }, vscode.ConfigurationTarget.Global);
       const overwrittenByOlderWindow: TokenColorCustomizations = {
         textMateRules: [helperRule('Comments', '#00FF00')],
         '[Dark Test Theme]': { textMateRules: [helperRule('Comments', '#00FF00')] },
@@ -249,8 +271,7 @@ suite('KRL syntax color configuration', () => {
       assert.strictEqual(helperForeground(light, '[Dark Test Theme]', 'Comments'), '#FFFF00');
       assert.strictEqual(helperForeground(light, '[Light Test Theme]', 'Comments'), '#FF0000');
     } finally {
-      await configuration.update('dark', previousDark, vscode.ConfigurationTarget.Global);
-      await configuration.update('light', previousLight, vscode.ConfigurationTarget.Global);
+      await configuration.update('palettes', previousValue, vscode.ConfigurationTarget.Global);
     }
   });
 
@@ -266,55 +287,50 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(validateSubmittedPalettes(colors), undefined);
   });
 
-  test('restores both User Settings values when the second palette write fails', async () => {
-    const previous = completePalettes('#112233');
+  test('persists both palettes with one atomic User Settings update', async () => {
     const next = completePalettes('#445566');
-    const values: Record<string, unknown> = { dark: previous.dark, light: previous.light };
-    let rejectNextLightWrite = true;
+    const updates: Array<{ section: string; value: unknown; target: vscode.ConfigurationTarget }> = [];
     const configuration = {
-      inspect: <T>(section: string): { globalValue?: T } => ({ globalValue: values[section] as T }),
-      update: async (section: string, value: unknown): Promise<void> => {
-        if (section === 'light' && rejectNextLightWrite) {
-          rejectNextLightWrite = false;
-          throw new Error('synthetic write failure');
-        }
-        values[section] = value;
+      update: async (
+        section: string,
+        value: unknown,
+        target: vscode.ConfigurationTarget
+      ): Promise<void> => {
+        updates.push({ section, value, target });
       }
     };
 
-    await assert.rejects(
-      persistPalettes(next, configuration),
-      /previous User Settings values were restored/
-    );
-    assert.deepStrictEqual(values, previous);
+    await persistPalettes(next, configuration);
+
+    assert.deepStrictEqual(updates, [{
+      section: 'palettes',
+      value: next,
+      target: vscode.ConfigurationTarget.Global
+    }]);
   });
 
-  test('reports a recoverable partial palette write when rollback also fails', async () => {
-    const previous = completePalettes('#112233');
+  test('reports an atomic palette write failure without claiming a partial save', async () => {
     const next = completePalettes('#445566');
+    let updateCount = 0;
     const configuration = {
-      inspect: <T>(section: string): { globalValue?: T } => ({
-        globalValue: previous[section as keyof typeof previous] as T
-      }),
-      update: async (section: string, value: unknown): Promise<void> => {
-        if (section === 'light' || value === previous.dark) {
-          throw new Error('synthetic write failure');
-        }
+      update: async (): Promise<void> => {
+        updateCount++;
+        throw new Error('synthetic write failure');
       }
     };
 
     await assert.rejects(
       persistPalettes(next, configuration),
-      /only partially saved.*Review the KRL palette values/
+      /No palette changes were applied/
     );
+    assert.strictEqual(updateCount, 1);
   });
 
   test('settings editor renders color and diagnostics tabs with palette defaults', () => {
     const extension = vscode.extensions.getExtension('MichaeINeumann.krl-helper');
     assert.ok(extension);
     const properties = extension.packageJSON.contributes.configuration.properties;
-    assert.strictEqual(properties['krlHighlighting.palettes.dark'].scope, 'application');
-    assert.strictEqual(properties['krlHighlighting.palettes.light'].scope, 'application');
+    assert.strictEqual(properties['krlHighlighting.palettes'].scope, 'application');
 
     const html = colorSettingsHtml({ cspSource: 'test-source' } as vscode.Webview, 'light');
 
@@ -331,6 +347,9 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.'));
     assert.ok(html.includes("event.data.type === 'saveError'"));
     assert.ok(html.includes("event.data.type === 'palettesState'"));
+    assert.ok(html.includes('const dirtyColorKeys = new Set()'));
+    assert.ok(html.includes('dirtyColorKeys.has(colorControlKey(input))'));
+    assert.ok(html.includes('Unsaved color edits were preserved.'));
     assert.ok(html.includes('data-key="localVariablePrefixes"'));
     assert.ok(html.includes('<option value="user"'));
     assert.ok(html.includes('<option value="workspace"'));
