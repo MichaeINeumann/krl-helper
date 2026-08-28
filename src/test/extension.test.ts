@@ -579,6 +579,43 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('discovers uppercase $CONFIG.DAT outside the workspace on case-sensitive filesystems', async () => {
+    const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `uppercase-config-${Date.now()}`));
+    const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'standalone.src');
+    const configUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', '$CONFIG.DAT');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program'));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF Standalone()',
+      '  bUpperConfig = TRUE',
+      '  bMissingConfig = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(configUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bUpperConfig\nENDDAT\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bMissingConfig'"))
+      );
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bUpperConfig'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bUpperConfig'))
+      );
+      assert.ok(definitions.some(definition => definition.uri.toString() === configUri.toString()));
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('excludes directives, KRL keywords, and I/O aliases from generic prefix diagnostics', async () => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(workspaceFolder);

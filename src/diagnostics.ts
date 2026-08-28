@@ -654,9 +654,9 @@ function findCompanionDat(sourcePath: string): string | null {
 function findConfigDat(sourcePath: string): string | null {
   const projectRoot = findProjectRoot(sourcePath);
   if (projectRoot) {
-    const directPath = path.join(projectRoot, 'KRC', 'R1', 'System', '$config.dat');
-    if (fs.existsSync(directPath)) {
-      return directPath;
+    const projectConfig = findProjectConfigDat(projectRoot);
+    if (projectConfig) {
+      return projectConfig;
     }
   }
 
@@ -666,6 +666,27 @@ function findConfigDat(sourcePath: string): string | null {
   }
   const anyCandidates = getConfigCandidates(false);
   return anyCandidates.length > 0 ? nearestPath(sourcePath, anyCandidates) : null;
+}
+
+function findProjectConfigDat(projectRoot: string): string | null {
+  let currentPath = projectRoot;
+  const components = ['KRC', 'R1', 'System', '$config.dat'];
+  for (const [index, component] of components.entries()) {
+    const expectFile = index === components.length - 1;
+    try {
+      const matchingEntry = fs.readdirSync(currentPath, { withFileTypes: true }).find(entry =>
+        entry.name.toLowerCase() === component.toLowerCase()
+        && (expectFile ? entry.isFile() : entry.isDirectory())
+      );
+      if (!matchingEntry) {
+        return null;
+      }
+      currentPath = path.join(currentPath, matchingEntry.name);
+    } catch {
+      return null;
+    }
+  }
+  return currentPath;
 }
 
 function findProjectRoot(filePath: string): string | null {
