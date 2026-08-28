@@ -29,8 +29,7 @@ interface DependencyState {
 
 interface WorkspaceScan {
   lastScanMs: number;
-  systemConfigs: string[];
-  anyConfigs: string[];
+  configs: string[];
 }
 
 interface ProjectDeclarationIndex {
@@ -652,20 +651,15 @@ function findCompanionDat(sourcePath: string): string | null {
 }
 
 function findConfigDat(sourcePath: string): string | null {
+  const candidates = getConfigCandidates();
   const projectRoot = findProjectRoot(sourcePath);
   if (projectRoot) {
     const projectConfig = findProjectConfigDat(projectRoot);
-    if (projectConfig) {
-      return projectConfig;
+    if (projectConfig && !candidates.some(candidate => normalizePathKey(candidate) === normalizePathKey(projectConfig))) {
+      candidates.push(projectConfig);
     }
   }
-
-  const systemCandidates = getConfigCandidates(true);
-  if (systemCandidates.length > 0) {
-    return nearestPath(sourcePath, systemCandidates);
-  }
-  const anyCandidates = getConfigCandidates(false);
-  return anyCandidates.length > 0 ? nearestPath(sourcePath, anyCandidates) : null;
+  return candidates.length > 0 ? nearestPath(sourcePath, candidates) : null;
 }
 
 function findProjectConfigDat(projectRoot: string): string | null {
@@ -676,7 +670,7 @@ function findProjectConfigDat(projectRoot: string): string | null {
     try {
       const matchingEntry = fs.readdirSync(currentPath, { withFileTypes: true }).find(entry =>
         entry.name.toLowerCase() === component.toLowerCase()
-        && (expectFile ? entry.isFile() : entry.isDirectory())
+        && matchesFileSystemEntry(path.join(currentPath, entry.name), expectFile)
       );
       if (!matchingEntry) {
         return null;
@@ -687,6 +681,15 @@ function findProjectConfigDat(projectRoot: string): string | null {
     }
   }
   return currentPath;
+}
+
+function matchesFileSystemEntry(entryPath: string, expectFile: boolean): boolean {
+  try {
+    const stats = fs.statSync(entryPath);
+    return expectFile ? stats.isFile() : stats.isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function findProjectRoot(filePath: string): string | null {
@@ -706,20 +709,18 @@ function findProjectRoot(filePath: string): string | null {
   return null;
 }
 
-function getConfigCandidates(systemOnly: boolean): string[] {
+function getConfigCandidates(): string[] {
   const now = Date.now();
   const candidates: string[] = [];
   for (const workspaceRoot of workspaceRoots) {
     let scan = workspaceScanCache.get(workspaceRoot);
     if (!scan || now - scan.lastScanMs > workspaceScanTtlMs) {
-      const systemConfigs: string[] = [];
-      const anyConfigs: string[] = [];
-      scanWorkspaceForConfigs(workspaceRoot, systemConfigs, anyConfigs);
-      scan = { lastScanMs: now, systemConfigs, anyConfigs };
+      const configs: string[] = [];
+      scanWorkspaceForConfigs(workspaceRoot, configs);
+      scan = { lastScanMs: now, configs };
       workspaceScanCache.set(workspaceRoot, scan);
     }
-    const source = systemOnly ? scan.systemConfigs : scan.anyConfigs;
-    for (const candidate of source) {
+    for (const candidate of scan.configs) {
       candidates.push(candidate);
       if (candidates.length >= maxConfigCandidates) {
         return candidates;
@@ -729,7 +730,7 @@ function getConfigCandidates(systemOnly: boolean): string[] {
   return candidates;
 }
 
-function scanWorkspaceForConfigs(root: string, systemConfigs: string[], anyConfigs: string[]): void {
+function scanWorkspaceForConfigs(root: string, configs: string[]): void {
   const directories = [root];
   while (directories.length > 0) {
     const directory = directories.pop();
@@ -753,22 +754,12 @@ function scanWorkspaceForConfigs(root: string, systemConfigs: string[], anyConfi
       if (!entry.isFile() || entry.name.toLowerCase() !== '$config.dat') {
         continue;
       }
-      const configPath = path.join(directory, entry.name);
-      anyConfigs.push(configPath);
-      if (isSystemConfig(configPath)) {
-        systemConfigs.push(configPath);
-      }
-      if (anyConfigs.length >= maxConfigCandidates && systemConfigs.length >= maxConfigCandidates) {
+      configs.push(path.join(directory, entry.name));
+      if (configs.length >= maxConfigCandidates) {
         return;
       }
     }
   }
-}
-
-function isSystemConfig(filePath: string): boolean {
-  const normalized = path.normalize(filePath).toLowerCase();
-  const suffix = path.sep + ['krc', 'r1', 'system', '$config.dat'].join(path.sep);
-  return normalized.endsWith(suffix);
 }
 
 function pathDistance(leftPath: string, rightPath: string): number {

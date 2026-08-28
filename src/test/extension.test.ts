@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -579,6 +580,56 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('prefers a nearby non-System $config.dat over a remote System config', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const containerUri = vscode.Uri.joinPath(workspaceFolder.uri, `mixed-config-${Date.now()}`);
+    const nearbyRootUri = vscode.Uri.joinPath(containerUri, 'nearby');
+    const remoteRootUri = vscode.Uri.joinPath(containerUri, 'remote');
+    const sourceUri = vscode.Uri.joinPath(nearbyRootUri, 'standalone.src');
+    const nearbyConfigUri = vscode.Uri.joinPath(nearbyRootUri, '$config.dat');
+    const remoteConfigUri = vscode.Uri.joinPath(remoteRootUri, 'KRC', 'R1', 'System', '$config.dat');
+    await vscode.workspace.fs.createDirectory(nearbyRootUri);
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(remoteRootUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF Standalone()',
+      '  bNearbyConfig = TRUE',
+      '  bRemoteSystemConfig = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(nearbyConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bNearbyConfig\nENDDAT\n'
+    ));
+    await vscode.workspace.fs.writeFile(remoteConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bRemoteSystemConfig\nENDDAT\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnostics(sourceUri);
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bNearbyConfig'")));
+
+      const nearbyDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bNearbyConfig'))
+      );
+      assert.ok(nearbyDefinitions.some(definition => definition.uri.toString() === nearbyConfigUri.toString()));
+
+      const remoteDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bRemoteSystemConfig'))
+      );
+      assert.ok(!remoteDefinitions || remoteDefinitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(containerUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('discovers uppercase $CONFIG.DAT outside the workspace on case-sensitive filesystems', async () => {
     const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `uppercase-config-${Date.now()}`));
     const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'standalone.src');
@@ -608,6 +659,49 @@ suite('KRL Helper', () => {
         'vscode.executeDefinitionProvider',
         sourceUri,
         document.positionAt(lastIdentifierOffset(document.getText(), 'bUpperConfig'))
+      );
+      assert.ok(definitions.some(definition => definition.uri.toString() === configUri.toString()));
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('discovers a standalone project config through a symbolic-link directory', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `symlink-config-${Date.now()}`));
+    const actualKrcUri = vscode.Uri.joinPath(projectUri, 'actual-krc');
+    const linkedKrcUri = vscode.Uri.joinPath(projectUri, 'KRC');
+    const sourceUri = vscode.Uri.joinPath(linkedKrcUri, 'R1', 'Program', 'standalone.src');
+    const configUri = vscode.Uri.joinPath(linkedKrcUri, 'R1', 'System', '$config.dat');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(actualKrcUri, 'R1', 'Program'));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(actualKrcUri, 'R1', 'System'));
+    await fs.promises.symlink(actualKrcUri.fsPath, linkedKrcUri.fsPath, 'dir');
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF Standalone()',
+      '  bLinkedConfig = TRUE',
+      '  bMissingConfig = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(configUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bLinkedConfig\nENDDAT\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bMissingConfig'"))
+      );
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bLinkedConfig'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bLinkedConfig'))
       );
       assert.ok(definitions.some(definition => definition.uri.toString() === configUri.toString()));
     } finally {
