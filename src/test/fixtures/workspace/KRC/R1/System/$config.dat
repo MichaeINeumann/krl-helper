@@ -1,4 +1,5 @@
 DEFDAT $CONFIG
 DECL BOOL b_Config
+DECL BOOL bWorkspaceOnly
 DECL INT i_Configured
 ENDDAT

@@ -330,7 +330,7 @@ suite('KRL Helper', () => {
       { name: 'b_Config', suffix: '/System/$config.dat', line: 1 },
       { name: 'b_Public', suffix: '/shared.dat', line: 1 },
       { name: 'n_SourceGlobal', suffix: '/navigation-library.src', line: 0 },
-      { name: 'i_Configured', suffix: '/System/$config.dat', line: 2 }
+      { name: 'i_Configured', suffix: '/System/$config.dat', line: 3 }
     ];
     for (const expected of expectedDefinitions) {
       const position = document.positionAt(lastIdentifierOffset(document.getText(), expected.name));
@@ -524,6 +524,82 @@ suite('KRL Helper', () => {
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     } finally {
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('does not expose workspace config declarations to standalone sources', async () => {
+    const sourceUri = vscode.Uri.file(path.join(
+      os.tmpdir(),
+      `krl-helper-standalone-scope-${Date.now()}.src`
+    ));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF StandaloneScope()',
+      '  bWorkspaceOnly = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bWorkspaceOnly'"))
+      );
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bWorkspaceOnly'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bWorkspaceOnly'))
+      );
+      assert.ok(!definitions || definitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(sourceUri, { useTrash: false });
+    }
+  });
+
+  test('keeps public DAT globals inside the source KRC/R1 tree', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const suffix = Date.now().toString();
+    const sourceUri = vscode.Uri.joinPath(
+      workspaceFolder.uri, 'KRC', 'R1', 'Program', `scope-boundary-${suffix}.src`
+    );
+    const outsideDirectoryUri = vscode.Uri.joinPath(workspaceFolder.uri, `outside-r1-${suffix}`);
+    const outsideDatUri = vscode.Uri.joinPath(outsideDirectoryUri, 'foreign.dat');
+    await vscode.workspace.fs.createDirectory(outsideDirectoryUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF ScopeBoundary()',
+      '  bOutOfTree = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(outsideDatUri, Buffer.from([
+      'DEFDAT Foreign PUBLIC',
+      'GLOBAL BOOL bOutOfTree',
+      'ENDDAT',
+      ''
+    ].join('\n')));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bOutOfTree'"))
+      );
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bOutOfTree'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bOutOfTree'))
+      );
+      assert.ok(!definitions || definitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(sourceUri, { useTrash: false });
+      await vscode.workspace.fs.delete(outsideDirectoryUri, { recursive: true, useTrash: false });
     }
   });
 

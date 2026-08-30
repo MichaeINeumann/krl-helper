@@ -199,7 +199,7 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
     }
   }
 
-  const configDat = findConfigDat(sourcePath);
+  const configDat = findConfigDat(sourcePath, document);
   const dependencyPaths = [companionDat, configDat].filter((item): item is string => Boolean(item));
   updateDocumentDependencies(document.uri.toString(), dependencyPaths);
 
@@ -363,12 +363,12 @@ function findDeclarationProjectRoot(sourcePath: string, document: vscode.TextDoc
   const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
     ?? workspaceRoots.find(root => isPathInside(sourcePath, root))
     ?? null;
-  const krcProjectRoot = findProjectRoot(sourcePath);
+  const krcR1Root = findKrcR1Root(sourcePath);
 
-  if (krcProjectRoot && (!workspaceRoot || isPathInside(krcProjectRoot, workspaceRoot))) {
-    return krcProjectRoot;
+  if (krcR1Root && (!workspaceRoot || isPathInside(krcR1Root, workspaceRoot))) {
+    return krcR1Root;
   }
-  return workspaceRoot ?? krcProjectRoot;
+  return workspaceRoot ?? krcR1Root;
 }
 
 async function getProjectDeclarations(root: string): Promise<ProjectDeclarationIndex> {
@@ -647,24 +647,31 @@ function findCompanionDat(sourcePath: string): string | null {
   }
 }
 
-function findConfigDat(sourcePath: string): string | null {
-  const projectRoot = findProjectRoot(sourcePath);
-  if (projectRoot) {
-    const directPath = path.join(projectRoot, 'KRC', 'R1', 'System', '$config.dat');
+function findConfigDat(sourcePath: string, document: vscode.TextDocument): string | null {
+  const krcR1Root = findKrcR1Root(sourcePath);
+  let candidateRoots: string[];
+  if (krcR1Root) {
+    const directPath = path.join(krcR1Root, 'System', '$config.dat');
     if (fs.existsSync(directPath)) {
       return directPath;
     }
+    candidateRoots = [krcR1Root];
+  } else {
+    const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
+    if (!workspaceRoot) {
+      return null;
+    }
+    candidateRoots = [workspaceRoot];
   }
-
-  const systemCandidates = getConfigCandidates(true);
+  const systemCandidates = getConfigCandidates(true, candidateRoots);
   if (systemCandidates.length > 0) {
     return nearestPath(sourcePath, systemCandidates);
   }
-  const anyCandidates = getConfigCandidates(false);
+  const anyCandidates = getConfigCandidates(false, candidateRoots);
   return anyCandidates.length > 0 ? nearestPath(sourcePath, anyCandidates) : null;
 }
 
-function findProjectRoot(filePath: string): string | null {
+function findKrcR1Root(filePath: string): string | null {
   const normalized = path.normalize(filePath);
   const parsed = path.parse(normalized);
   const parts = normalized.slice(parsed.root.length).split(path.sep).filter(part => part.length > 0);
@@ -676,15 +683,15 @@ function findProjectRoot(filePath: string): string | null {
     }
   }
   if (krcIndex !== -1) {
-    return path.join(parsed.root, ...parts.slice(0, krcIndex));
+    return path.join(parsed.root, ...parts.slice(0, krcIndex + 2));
   }
   return null;
 }
 
-function getConfigCandidates(systemOnly: boolean): string[] {
+function getConfigCandidates(systemOnly: boolean, roots: readonly string[]): string[] {
   const now = Date.now();
   const candidates: string[] = [];
-  for (const workspaceRoot of workspaceRoots) {
+  for (const workspaceRoot of roots) {
     let scan = workspaceScanCache.get(workspaceRoot);
     if (!scan || now - scan.lastScanMs > workspaceScanTtlMs) {
       const systemConfigs: string[] = [];
