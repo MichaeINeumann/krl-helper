@@ -537,6 +537,38 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('does not import workspace configs into an external standalone file', async () => {
+    const directoryUri = vscode.Uri.file(path.join(os.tmpdir(), `external-config-scope-${Date.now()}`));
+    const sourceUri = vscode.Uri.joinPath(directoryUri, 'standalone.src');
+    await vscode.workspace.fs.createDirectory(directoryUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF Standalone()',
+      '  b_Config = TRUE',
+      '  bStillMissing = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bStillMissing'"))
+      );
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'b_Config'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'b_Config'))
+      );
+      assert.ok(!definitions || definitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(directoryUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('diagnostics and navigation agree on visibility inside a nested KRC R1 tree', async () => {
     // Both providers must select the same KRC/R1 occurrence. The inner tree owns the source, so a
     // global declared only in the outer tree must be unresolved for diagnostics and navigation
@@ -887,6 +919,42 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('keeps canonical config lookup inside a case-distinct inferred tree', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `case-distinct-config-${Date.now()}`));
+    const foreignConfigUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', '$config.dat');
+    const sourceUri = vscode.Uri.joinPath(projectUri, 'krc', 'R1', 'Program', 'standalone.src');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(foreignConfigUri, Buffer.from(
+      'DEFDAT $CONFIG\nDECL BOOL bForeignConfig\nENDDAT\n'
+    ));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'krc', 'R1', 'Program'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(
+      'DEF Standalone()\n  bForeignConfig = TRUE\nEND\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bForeignConfig'"))
+      );
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bForeignConfig'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bForeignConfig'))
+      );
+      assert.ok(!definitions || definitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('discovers $config.dat through a symbolic-link directory', async function () {
     if (process.platform === 'win32') {
       this.skip();
@@ -925,6 +993,41 @@ suite('KRL Helper', () => {
         document.positionAt(lastIdentifierOffset(document.getText(), 'bLinkedConfig'))
       );
       assert.ok(definitions.some(definition => definition.uri.toString() === configUri.toString()));
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('deduplicates a public DAT reached through a file symlink', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `symlink-file-${Date.now()}`));
+    const programUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program');
+    const systemUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System');
+    const sourceUri = vscode.Uri.joinPath(programUri, 'standalone.src');
+    const globalUri = vscode.Uri.joinPath(systemUri, 'shared.dat');
+    const aliasUri = vscode.Uri.joinPath(systemUri, 'shared-alias.dat');
+    await vscode.workspace.fs.createDirectory(programUri);
+    await vscode.workspace.fs.createDirectory(systemUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(
+      'DEF Standalone()\n  bLinkedFile = TRUE\nEND\n'
+    ));
+    await vscode.workspace.fs.writeFile(globalUri, Buffer.from(
+      'DEFDAT Shared PUBLIC\nGLOBAL BOOL bLinkedFile\nENDDAT\n'
+    ));
+    await fs.promises.symlink(globalUri.fsPath, aliasUri.fsPath, 'file');
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bLinkedFile'))
+      );
+      assert.strictEqual(definitions.length, 1);
     } finally {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });

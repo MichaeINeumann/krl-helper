@@ -15,10 +15,17 @@ export const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modu
 
 export const configDatName = '$config.dat';
 
+function pathImplementation(platform: NodeJS.Platform): path.PlatformPath {
+  return platform === 'win32' ? path.win32 : path.posix;
+}
+
 /** Case-folds on Windows so that path comparisons match the platform's filesystem semantics. */
-export function normalizeProjectPath(filePath: string): string {
-  const normalized = path.resolve(filePath);
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+export function normalizeProjectPath(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  const normalized = pathImplementation(platform).resolve(filePath);
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 export function isConfigDat(filePath: string): boolean {
@@ -50,9 +57,14 @@ export function inferKrlTreeRoot(filePath: string): string | null {
 }
 
 /** Number of path segments separating two paths, used to rank candidates by proximity. */
-export function pathDistance(leftPath: string, rightPath: string): number {
-  const left = path.normalize(leftPath).split(path.sep).filter(part => part.length > 0);
-  const right = path.normalize(rightPath).split(path.sep).filter(part => part.length > 0);
+export function pathDistance(
+  leftPath: string,
+  rightPath: string,
+  platform: NodeJS.Platform = process.platform
+): number {
+  const pathApi = pathImplementation(platform);
+  const left = normalizeProjectPath(leftPath, platform).split(pathApi.sep).filter(part => part.length > 0);
+  const right = normalizeProjectPath(rightPath, platform).split(pathApi.sep).filter(part => part.length > 0);
   let common = 0;
   const limit = Math.min(left.length, right.length);
   while (common < limit && left[common] === right[common]) {
@@ -67,15 +79,19 @@ export function pathDistance(leftPath: string, rightPath: string): number {
  * Ties are broken by normalized path so that both providers select the same candidate regardless
  * of the order in which their scans discovered them.
  */
-export function selectNearestPath(sourcePath: string, candidates: readonly string[]): string | null {
+export function selectNearestPath(
+  sourcePath: string,
+  candidates: readonly string[],
+  platform: NodeJS.Platform = process.platform
+): string | null {
   let nearest: string | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
   for (const candidate of candidates) {
-    const distance = pathDistance(sourcePath, candidate);
+    const distance = pathDistance(sourcePath, candidate, platform);
     if (distance < nearestDistance
       || (distance === nearestDistance
         && nearest !== null
-        && normalizeProjectPath(candidate) < normalizeProjectPath(nearest))) {
+        && normalizeProjectPath(candidate, platform) < normalizeProjectPath(nearest, platform))) {
       nearest = candidate;
       nearestDistance = distance;
     }
@@ -87,9 +103,8 @@ export function selectNearestPath(sourcePath: string, candidates: readonly strin
  * Recursively collects files below `root` that satisfy `accept`.
  *
  * Symbolic links are followed for both directories and files, because KRL projects are commonly
- * assembled from linked controller shares. Every directory is visited at most once per scan, keyed
- * by its real path, so a tree containing both a directory and a link to it does not index the same
- * physical file twice.
+ * assembled from linked controller shares. Every directory and accepted file is visited at most
+ * once per scan, keyed by its real path, so aliases do not index the same physical file twice.
  */
 export async function scanProjectTree(
   root: string,
@@ -134,7 +149,15 @@ export async function scanProjectTree(
           directories.push(entryPath);
         }
       } else if (fileEntry && accept(entryPath)) {
-        files.push(entryPath);
+        try {
+          const realFile = normalizeProjectPath(await fs.promises.realpath(entryPath));
+          if (!visitedRealPaths.has(realFile)) {
+            visitedRealPaths.add(realFile);
+            files.push(entryPath);
+          }
+        } catch {
+          continue;
+        }
       }
     }
   }
@@ -185,7 +208,15 @@ export function scanProjectTreeSync(
           directories.push(entryPath);
         }
       } else if (fileEntry && accept(entryPath)) {
-        files.push(entryPath);
+        try {
+          const realFile = normalizeProjectPath(fs.realpathSync(entryPath));
+          if (!visitedRealPaths.has(realFile)) {
+            visitedRealPaths.add(realFile);
+            files.push(entryPath);
+          }
+        } catch {
+          continue;
+        }
       }
     }
   }

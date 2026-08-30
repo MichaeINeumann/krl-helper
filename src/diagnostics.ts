@@ -628,9 +628,8 @@ function findConfigDat(sourcePath: string, document: vscode.TextDocument): strin
   const candidates = krlTreeRoot
     ? getCachedConfigPaths(krlTreeRoot)
     : getConfigCandidates(document);
-  const projectRoot = findProjectRoot(sourcePath);
-  if (projectRoot) {
-    const projectConfig = findProjectConfigDat(projectRoot);
+  if (krlTreeRoot) {
+    const projectConfig = findProjectConfigDat(krlTreeRoot);
     if (projectConfig && !candidates.some(candidate => normalizePathKey(candidate) === normalizePathKey(projectConfig))) {
       candidates.push(projectConfig);
     }
@@ -638,9 +637,9 @@ function findConfigDat(sourcePath: string, document: vscode.TextDocument): strin
   return selectNearestPath(sourcePath, candidates);
 }
 
-function findProjectConfigDat(projectRoot: string): string | null {
-  let currentPath = projectRoot;
-  const components = ['KRC', 'R1', 'System', '$config.dat'];
+function findProjectConfigDat(krlTreeRoot: string): string | null {
+  let currentPath = krlTreeRoot;
+  const components = ['System', '$config.dat'];
   for (const [index, component] of components.entries()) {
     const expectFile = index === components.length - 1;
     try {
@@ -668,12 +667,6 @@ function matchesFileSystemEntry(entryPath: string, expectFile: boolean): boolean
   }
 }
 
-function findProjectRoot(filePath: string): string | null {
-  const krlTreeRoot = inferKrlTreeRoot(filePath);
-  return krlTreeRoot ? path.dirname(path.dirname(krlTreeRoot)) : null;
-}
-
-
 /**
  * Config candidates for a source outside any `KRC/R1` tree.
  *
@@ -683,7 +676,7 @@ function findProjectRoot(filePath: string): string | null {
  */
 function getConfigCandidates(document: vscode.TextDocument): string[] {
   const ownFolder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
-  const roots = ownFolder ? [ownFolder] : workspaceRoots;
+  const roots = ownFolder ? [ownFolder] : [];
   const candidates: string[] = [];
   for (const workspaceRoot of roots) {
     for (const candidate of getCachedConfigPaths(workspaceRoot)) {
