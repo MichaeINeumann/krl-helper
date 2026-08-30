@@ -2,7 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { sanitizeForAnalysis } from './diagnosticSanitizer';
-import { createOpenProjectDocumentIndex, OpenProjectDocumentIndex } from './projectDocuments';
 import {
   classifyVariable,
   collectDeclarations,
@@ -14,16 +13,6 @@ import {
   matchesAnyPrefix,
   normalizePrefixConfiguration
 } from './diagnosticModel';
-import {
-  inferKrlTreeRoot,
-  isConfigDat,
-  isProjectDeclarationFile as isKrlDeclarationFile,
-  normalizeProjectPath,
-  projectRootForSource,
-  scanProjectTree,
-  scanProjectTreeSync,
-  selectNearestPath
-} from './projectScope';
 
 interface CachedText {
   mtimeMs: number;
@@ -38,9 +27,10 @@ interface DependencyState {
   paths: Set<string>;
 }
 
-interface ConfigScan {
+interface WorkspaceScan {
   lastScanMs: number;
-  configs: string[];
+  systemConfigs: string[];
+  anyConfigs: string[];
 }
 
 interface ProjectDeclarationIndex {
@@ -57,12 +47,14 @@ const configNameCache = new Map<string, CachedNames>();
 const dependencyState = new Map<string, DependencyState>();
 const dependentsByPath = new Map<string, Set<string>>();
 const fileWatchers = new Map<string, fs.FSWatcher>();
-const configScanCache = new Map<string, ConfigScan>();
+const workspaceScanCache = new Map<string, WorkspaceScan>();
 const projectDeclarationCache = new Map<string, ProjectDeclarationIndex>();
 const projectDeclarationBuilds = new Map<string, Promise<ProjectDeclarationIndex>>();
 const projectDeclarationRevisions = new Map<string, number>();
 
-const configScanTtlMs = 5000;
+const maxConfigCandidates = 50;
+const workspaceScanTtlMs = 5000;
+const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
 const ignoredIdentifiers = new Set([
   'def', 'deffct', 'defdat', 'end', 'endfct', 'enddat', 'global', 'decl',
   'const', 'ext', 'public', 'private', 'extern', 'static', 'in', 'out', 'inout',
@@ -135,7 +127,7 @@ export function initializeDiagnostics(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       refreshWorkspaceRoots();
-      configScanCache.clear();
+      workspaceScanCache.clear();
       projectDeclarationCache.clear();
       projectDeclarationBuilds.clear();
       projectDeclarationRevisions.clear();
@@ -207,7 +199,7 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
     }
   }
 
-  const configDat = findConfigDat(sourcePath, document);
+  const configDat = findConfigDat(sourcePath);
   const dependencyPaths = [companionDat, configDat].filter((item): item is string => Boolean(item));
   updateDocumentDependencies(document.uri.toString(), dependencyPaths);
 
@@ -309,7 +301,7 @@ function handleDependencyChange(filePath: string, eventType: string): void {
       watcher.close();
       fileWatchers.delete(filePath);
     }
-    configScanCache.clear();
+    workspaceScanCache.clear();
   }
 
   const dependents = dependentsByPath.get(filePath);
@@ -325,12 +317,12 @@ function handleDependencyChange(filePath: string, eventType: string): void {
 }
 
 function handleProjectFileChange(filePath: string): void {
-  if (!filePath || !isKrlDeclarationFile(filePath)) {
+  if (!filePath || !isProjectDeclarationFile(filePath)) {
     return;
   }
   fileCache.delete(filePath);
   configNameCache.delete(filePath);
-  configScanCache.clear();
+  workspaceScanCache.clear();
   invalidateProjectIndexForPath(filePath);
   scheduleProjectDocumentsForPath(filePath);
 }
@@ -371,7 +363,12 @@ function findDeclarationProjectRoot(sourcePath: string, document: vscode.TextDoc
   const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
     ?? workspaceRoots.find(root => isPathInside(sourcePath, root))
     ?? null;
-  return projectRootForSource(sourcePath, workspaceRoot);
+  const krcProjectRoot = findProjectRoot(sourcePath);
+
+  if (krcProjectRoot && (!workspaceRoot || isPathInside(krcProjectRoot, workspaceRoot))) {
+    return krcProjectRoot;
+  }
+  return workspaceRoot ?? krcProjectRoot;
 }
 
 async function getProjectDeclarations(root: string): Promise<ProjectDeclarationIndex> {
@@ -405,18 +402,13 @@ async function getProjectDeclarations(root: string): Promise<ProjectDeclarationI
 async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclarationIndex> {
   const names = new Set<string>();
   const files = await scanProjectDeclarationFiles(root);
-  const openDocuments = await createOpenProjectDocumentIndex();
   for (const filePath of files) {
-    const text = await readProjectFileText(filePath, openDocuments);
+    const text = await readProjectFileText(filePath);
     if (!text) {
       continue;
     }
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.dat') {
-      // The nearest $config.dat is added separately for the source being analyzed.
-      if (isConfigDat(filePath)) {
-        continue;
-      }
       collectProjectDatDeclarations(filePath, text, names);
     } else {
       collectGlobalSourceDeclarations(text, names);
@@ -426,24 +418,57 @@ async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclar
 }
 
 async function scanProjectDeclarationFiles(root: string): Promise<string[]> {
-  return scanProjectTree(root, isKrlDeclarationFile);
+  const files: string[] = [];
+  const directories = [root];
+  while (directories.length > 0) {
+    const directory = directories.pop();
+    if (!directory) {
+      continue;
+    }
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!ignoredDirectories.has(entry.name.toLowerCase())) {
+          directories.push(path.join(directory, entry.name));
+        }
+        continue;
+      }
+      if (entry.isFile()) {
+        const filePath = path.join(directory, entry.name);
+        if (isProjectDeclarationFile(filePath)) {
+          files.push(filePath);
+        }
+      }
+    }
+  }
+  return files;
 }
 
-async function readProjectFileText(
-  filePath: string,
-  openDocuments?: OpenProjectDocumentIndex
-): Promise<string | null> {
-  const documents = openDocuments ?? await createOpenProjectDocumentIndex();
-  const openDocument = await documents.find(filePath);
+async function readProjectFileText(filePath: string): Promise<string | null> {
+  const key = normalizePathKey(filePath);
+  const openDocument = vscode.workspace.textDocuments.find(document =>
+    document.uri.scheme === 'file' && normalizePathKey(document.uri.fsPath) === key
+  );
   if (openDocument) {
     return openDocument.getText();
   }
   return readCachedText(filePath);
 }
 
+function isProjectDeclarationFile(filePath: string): boolean {
+  const extension = path.extname(filePath).toLowerCase();
+  return extension === '.dat' || extension === '.src' || extension === '.sub';
+}
 
 function normalizePathKey(filePath: string): string {
-  return normalizeProjectPath(filePath);
+  const normalized = path.resolve(filePath);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 function isPathInside(candidatePath: string, root: string): boolean {
@@ -622,85 +647,129 @@ function findCompanionDat(sourcePath: string): string | null {
   }
 }
 
-function findConfigDat(sourcePath: string, document: vscode.TextDocument): string | null {
-  const krlTreeRoot = inferKrlTreeRoot(sourcePath);
-  const candidates = krlTreeRoot
-    ? getCachedConfigPaths(krlTreeRoot)
-    : getConfigCandidates(document);
-  if (krlTreeRoot) {
-    const projectConfig = findProjectConfigDat(krlTreeRoot);
-    if (projectConfig && !candidates.some(candidate => normalizePathKey(candidate) === normalizePathKey(projectConfig))) {
-      candidates.push(projectConfig);
+function findConfigDat(sourcePath: string): string | null {
+  const projectRoot = findProjectRoot(sourcePath);
+  if (projectRoot) {
+    const directPath = path.join(projectRoot, 'KRC', 'R1', 'System', '$config.dat');
+    if (fs.existsSync(directPath)) {
+      return directPath;
     }
   }
-  return selectNearestPath(sourcePath, candidates);
+
+  const systemCandidates = getConfigCandidates(true);
+  if (systemCandidates.length > 0) {
+    return nearestPath(sourcePath, systemCandidates);
+  }
+  const anyCandidates = getConfigCandidates(false);
+  return anyCandidates.length > 0 ? nearestPath(sourcePath, anyCandidates) : null;
 }
 
-function findProjectConfigDat(krlTreeRoot: string): string | null {
-  let currentPath = krlTreeRoot;
-  const components = ['System', '$config.dat'];
-  for (const [index, component] of components.entries()) {
-    const expectFile = index === components.length - 1;
-    try {
-      const matchingEntry = fs.readdirSync(currentPath, { withFileTypes: true }).find(entry =>
-        entry.name.toLowerCase() === component.toLowerCase()
-        && matchesFileSystemEntry(path.join(currentPath, entry.name), expectFile)
-      );
-      if (!matchingEntry) {
-        return null;
-      }
-      currentPath = path.join(currentPath, matchingEntry.name);
-    } catch {
-      return null;
+function findProjectRoot(filePath: string): string | null {
+  const normalized = path.normalize(filePath);
+  const parsed = path.parse(normalized);
+  const parts = normalized.slice(parsed.root.length).split(path.sep).filter(part => part.length > 0);
+  let krcIndex = -1;
+  for (let index = parts.length - 2; index >= 0; index -= 1) {
+    if (parts[index].toLowerCase() === 'krc' && parts[index + 1]?.toLowerCase() === 'r1') {
+      krcIndex = index;
+      break;
     }
   }
-  return currentPath;
-}
-
-function matchesFileSystemEntry(entryPath: string, expectFile: boolean): boolean {
-  try {
-    const stats = fs.statSync(entryPath);
-    return expectFile ? stats.isFile() : stats.isDirectory();
-  } catch {
-    return false;
+  if (krcIndex !== -1) {
+    return path.join(parsed.root, ...parts.slice(0, krcIndex));
   }
+  return null;
 }
 
-/**
- * Config candidates for a source outside any `KRC/R1` tree.
- *
- * Scoped to the source's own workspace folder, matching how variable navigation roots such a
- * document. In a multi-root workspace a config in an unrelated folder must not satisfy a
- * diagnostic that Go to Definition cannot resolve.
- */
-function getConfigCandidates(document: vscode.TextDocument): string[] {
-  const ownFolder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
-  const roots = ownFolder ? [ownFolder] : [];
+function getConfigCandidates(systemOnly: boolean): string[] {
+  const now = Date.now();
   const candidates: string[] = [];
-  for (const workspaceRoot of roots) {
-    for (const candidate of getCachedConfigPaths(workspaceRoot)) {
+  for (const workspaceRoot of workspaceRoots) {
+    let scan = workspaceScanCache.get(workspaceRoot);
+    if (!scan || now - scan.lastScanMs > workspaceScanTtlMs) {
+      const systemConfigs: string[] = [];
+      const anyConfigs: string[] = [];
+      scanWorkspaceForConfigs(workspaceRoot, systemConfigs, anyConfigs);
+      scan = { lastScanMs: now, systemConfigs, anyConfigs };
+      workspaceScanCache.set(workspaceRoot, scan);
+    }
+    const source = systemOnly ? scan.systemConfigs : scan.anyConfigs;
+    for (const candidate of source) {
       candidates.push(candidate);
+      if (candidates.length >= maxConfigCandidates) {
+        return candidates;
+      }
     }
   }
   return candidates;
 }
 
-function getCachedConfigPaths(root: string): string[] {
-  const key = normalizePathKey(root);
-  const now = Date.now();
-  let scan = configScanCache.get(key);
-  if (!scan || now - scan.lastScanMs > configScanTtlMs) {
-    scan = { lastScanMs: now, configs: scanConfigPaths(root) };
-    configScanCache.set(key, scan);
+function scanWorkspaceForConfigs(root: string, systemConfigs: string[], anyConfigs: string[]): void {
+  const directories = [root];
+  while (directories.length > 0) {
+    const directory = directories.pop();
+    if (!directory) {
+      continue;
+    }
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!ignoredDirectories.has(entry.name)) {
+          directories.push(path.join(directory, entry.name));
+        }
+        continue;
+      }
+      if (!entry.isFile() || entry.name.toLowerCase() !== '$config.dat') {
+        continue;
+      }
+      const configPath = path.join(directory, entry.name);
+      anyConfigs.push(configPath);
+      if (isSystemConfig(configPath)) {
+        systemConfigs.push(configPath);
+      }
+      if (anyConfigs.length >= maxConfigCandidates && systemConfigs.length >= maxConfigCandidates) {
+        return;
+      }
+    }
   }
-  return [...scan.configs];
 }
 
-function scanConfigPaths(root: string): string[] {
-  return scanProjectTreeSync(root, isConfigDat);
+function isSystemConfig(filePath: string): boolean {
+  const normalized = path.normalize(filePath).toLowerCase();
+  const suffix = path.sep + ['krc', 'r1', 'system', '$config.dat'].join(path.sep);
+  return normalized.endsWith(suffix);
 }
 
+function pathDistance(leftPath: string, rightPath: string): number {
+  const left = path.normalize(leftPath).split(path.sep).filter(part => part.length > 0);
+  const right = path.normalize(rightPath).split(path.sep).filter(part => part.length > 0);
+  let common = 0;
+  const limit = Math.min(left.length, right.length);
+  while (common < limit && left[common] === right[common]) {
+    common += 1;
+  }
+  return (left.length - common) + (right.length - common);
+}
 
+function nearestPath(sourcePath: string, candidates: string[]): string {
+  let nearest = candidates[0];
+  let nearestDistance = pathDistance(sourcePath, nearest);
+  for (let index = 1; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const distance = pathDistance(sourcePath, candidate);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearest = candidate;
+    }
+  }
+  return nearest;
+}
 
 async function readCachedText(filePath: string): Promise<string | null> {
   return (await readCachedFile(filePath))?.text ?? null;
@@ -723,8 +792,10 @@ async function readCachedFile(filePath: string): Promise<CachedText | null> {
 }
 
 async function readConfigAliases(configPath: string): Promise<Set<string>> {
-  const openDocuments = await createOpenProjectDocumentIndex();
-  const openDocument = await openDocuments.find(configPath);
+  const key = normalizePathKey(configPath);
+  const openDocument = vscode.workspace.textDocuments.find(document =>
+    document.uri.scheme === 'file' && normalizePathKey(document.uri.fsPath) === key
+  );
   if (openDocument) {
     return parseConfigAliases(openDocument.getText());
   }

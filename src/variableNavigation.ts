@@ -16,15 +16,6 @@ import {
   parseKrlVariableDeclarations
 } from './variableParser';
 import { parseKrlFunctions } from './functionParser';
-import { canonicalProjectPath, createOpenProjectDocumentIndex } from './projectDocuments';
-import {
-  isConfigDat,
-  isProjectDeclarationFile,
-  normalizeProjectPath,
-  projectRootForSource,
-  scanProjectTree,
-  selectNearestPath
-} from './projectScope';
 
 type KrlProjectFileKind = 'source' | 'dat' | 'other';
 
@@ -46,18 +37,10 @@ interface KrlRoutineRange {
 
 interface CachedProjectVariables {
   revision: number;
-  promise: Promise<ProjectVariableIndex>;
+  promise: Promise<IndexedKrlVariable[]>;
 }
 
-interface ProjectVariableIndex {
-  definitions: IndexedKrlVariable[];
-  configPaths: IndexedProjectPath[];
-}
-
-interface IndexedProjectPath {
-  path: string;
-  sourceId: string;
-}
+const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
 
 export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider, vscode.Disposable {
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -141,21 +124,13 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     normalizedName: string,
     referenceOffset: number
   ): Promise<IndexedKrlVariable[]> {
-    const currentSourceId = document.uri.scheme === 'file'
-      ? await canonicalProjectPath(document.uri.fsPath)
-      : uriKey(document.uri);
-    const currentDefinitions = indexDocument(document, currentSourceId);
+    const currentSourceId = uriKey(document.uri);
+    const currentDefinitions = indexDocument(document);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    const projectRoot = document.uri.scheme === 'file'
-      ? projectRootForSource(document.uri.fsPath, workspaceFolder?.uri.fsPath ?? null) ?? undefined
-      : workspaceFolder?.uri.fsPath;
-    const projectIndex = projectRoot
+    const projectRoot = inferKrlProjectRoot(document.uri) ?? workspaceFolder?.uri.fsPath;
+    const projectDefinitions = projectRoot
       ? await this.projectVariables(projectRoot)
-      : {
-        definitions: await siblingCompanionVariables(document),
-        configPaths: []
-      };
-    const projectDefinitions = projectIndex.definitions;
+      : await siblingCompanionVariables(document);
     const foreignDefinitions = projectDefinitions.filter(definition => definition.sourceId !== currentSourceId);
     const indexedDefinitions = [...currentDefinitions, ...foreignDefinitions];
     const allDefinitions = indexedDefinitions.filter(definition => definition.normalizedName === normalizedName);
@@ -169,11 +144,7 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
       }
       return !currentRoutine || definition.routineStartOffset === currentRoutine.startOffset;
     });
-    const globalDefinitions = selectGlobalDefinitions(
-      document.uri,
-      allDefinitions,
-      projectIndex.configPaths
-    );
+    const globalDefinitions = selectGlobalDefinitions(document.uri, allDefinitions, indexedDefinitions);
     const scope = classifyVariable(identifier, readPrefixConfiguration());
     const visible = scope === 'local'
       ? localDefinitions.length > 0 ? localDefinitions : globalDefinitions
@@ -183,7 +154,7 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     return deduplicateDefinitions(visible);
   }
 
-  private projectVariables(root: string): Promise<ProjectVariableIndex> {
+  private projectVariables(root: string): Promise<IndexedKrlVariable[]> {
     if (!vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root))) {
       return this.buildProjectVariables(root);
     }
@@ -197,27 +168,22 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     return promise;
   }
 
-  private async buildProjectVariables(root: string): Promise<ProjectVariableIndex> {
+  private async buildProjectVariables(root: string): Promise<IndexedKrlVariable[]> {
     const definitions: IndexedKrlVariable[] = [];
-    const configPaths: IndexedProjectPath[] = [];
-    const files = await scanProjectFiles(root);
-    const openDocuments = await createOpenProjectDocumentIndex();
-    for (const filePath of files) {
-      const openDocument = await openDocuments.find(filePath);
-      const uri = openDocument?.uri ?? vscode.Uri.file(filePath);
-      const sourceId = await canonicalProjectPath(filePath);
+    for (const filePath of await scanProjectFiles(root)) {
+      const uri = vscode.Uri.file(filePath);
+      const openDocument = vscode.workspace.textDocuments.find(document =>
+        document.uri.scheme === 'file' && normalizePath(document.uri.fsPath) === normalizePath(filePath)
+      );
       let fileText: string;
       try {
         fileText = openDocument?.getText() ?? await fs.promises.readFile(filePath, 'utf8');
       } catch {
         continue;
       }
-      definitions.push(...indexText(fileText, uri, sourceId, filePath));
-      if (isConfigDat(filePath)) {
-        configPaths.push({ path: filePath, sourceId });
-      }
+      definitions.push(...indexText(fileText, uri));
     }
-    return { definitions, configPaths };
+    return definitions;
   }
 }
 
@@ -232,17 +198,12 @@ export function initializeVariableNavigation(
   );
 }
 
-function indexDocument(document: vscode.TextDocument, sourceId = uriKey(document.uri)): IndexedKrlVariable[] {
-  return indexText(document.getText(), document.uri, sourceId);
+function indexDocument(document: vscode.TextDocument): IndexedKrlVariable[] {
+  return indexText(document.getText(), document.uri);
 }
 
-function indexText(
-  text: string,
-  uri: vscode.Uri,
-  sourceId = uriKey(uri),
-  metadataPath = uri.scheme === 'file' ? uri.fsPath : ''
-): IndexedKrlVariable[] {
-  const metadata = fileMetadata(uri, text, sourceId, metadataPath);
+function indexText(text: string, uri: vscode.Uri): IndexedKrlVariable[] {
+  const metadata = fileMetadata(uri, text);
   const routines = findKrlRoutines(text);
   return parseKrlVariableDeclarations(text).map(declaration => ({
     ...declaration,
@@ -253,19 +214,15 @@ function indexText(
   }));
 }
 
-function fileMetadata(
-  uri: vscode.Uri,
-  text: string,
-  sourceId: string,
-  filePath: string
-): Omit<IndexedKrlVariable, keyof ParsedKrlVariableDeclaration> {
-  const extension = filePath ? path.extname(filePath).toLowerCase() : '';
+function fileMetadata(uri: vscode.Uri, text: string): Omit<IndexedKrlVariable, keyof ParsedKrlVariableDeclaration> {
+  const extension = uri.scheme === 'file' ? path.extname(uri.fsPath).toLowerCase() : '';
   const fileKind: KrlProjectFileKind = extension === '.src' || extension === '.sub'
     ? 'source'
     : extension === '.dat' ? 'dat' : 'other';
+  const filePath = uri.scheme === 'file' ? uri.fsPath : '';
   return {
     uri,
-    sourceId,
+    sourceId: uriKey(uri),
     fileKind,
     directoryId: filePath ? normalizePath(path.dirname(filePath)) : '',
     moduleName: filePath ? path.basename(filePath, extension).toLowerCase() : '',
@@ -289,9 +246,10 @@ function isCompanionDefinition(currentUri: vscode.Uri, definition: IndexedKrlVar
 function selectGlobalDefinitions(
   currentUri: vscode.Uri,
   definitions: IndexedKrlVariable[],
-  configPaths: IndexedProjectPath[]
+  projectDefinitions: IndexedKrlVariable[]
 ): IndexedKrlVariable[] {
-  const nearestConfigId = selectNearestConfigId(currentUri, configPaths);
+  const configDefinitions = projectDefinitions.filter(definition => definition.configDat);
+  const nearestConfigId = selectNearestConfigId(currentUri, configDefinitions);
   return definitions.filter(definition => {
     if (definition.fileKind === 'source') {
       return isExplicitProjectGlobalDeclaration(definition);
@@ -308,16 +266,29 @@ function selectGlobalDefinitions(
 
 function selectNearestConfigId(
   currentUri: vscode.Uri,
-  configPaths: IndexedProjectPath[]
+  definitions: IndexedKrlVariable[]
 ): string | undefined {
-  if (configPaths.length === 0) {
+  const configIds = [...new Set(definitions.map(definition => definition.sourceId))];
+  if (configIds.length === 0) {
     return undefined;
   }
   if (currentUri.scheme !== 'file') {
-    return configPaths[0].sourceId;
+    return configIds[0];
   }
-  const nearest = selectNearestPath(currentUri.fsPath, configPaths.map(candidate => candidate.path));
-  return configPaths.find(candidate => normalizePath(candidate.path) === normalizePath(nearest ?? ''))?.sourceId;
+  let nearestId = configIds[0];
+  let nearestDistance = pathDistance(currentUri.fsPath, configPathForId(nearestId, definitions));
+  for (const configId of configIds.slice(1)) {
+    const distance = pathDistance(currentUri.fsPath, configPathForId(configId, definitions));
+    if (distance < nearestDistance) {
+      nearestId = configId;
+      nearestDistance = distance;
+    }
+  }
+  return nearestId;
+}
+
+function configPathForId(sourceId: string, definitions: IndexedKrlVariable[]): string {
+  return definitions.find(definition => definition.sourceId === sourceId)?.uri.fsPath ?? sourceId;
 }
 
 function deduplicateDefinitions(definitions: IndexedKrlVariable[]): IndexedKrlVariable[] {
@@ -389,18 +360,66 @@ function findKrlRoutines(text: string): KrlRoutineRange[] {
   });
 }
 
+function inferKrlProjectRoot(uri: vscode.Uri): string | undefined {
+  if (uri.scheme !== 'file') {
+    return undefined;
+  }
+  const parsedPath = path.parse(uri.fsPath);
+  const segments = path.relative(parsedPath.root, uri.fsPath).split(path.sep).filter(Boolean);
+  const krcIndex = segments.findIndex((segment, index) =>
+    segment.toLowerCase() === 'krc' && segments[index + 1]?.toLowerCase() === 'r1'
+  );
+  if (krcIndex === -1) {
+    return undefined;
+  }
+  return path.join(parsedPath.root, ...segments.slice(0, krcIndex + 2));
+}
+
 async function scanProjectFiles(root: string): Promise<string[]> {
-  return scanProjectTree(root, isProjectDeclarationFile);
+  const files: string[] = [];
+  const directories = [root];
+  while (directories.length > 0) {
+    const directory = directories.pop();
+    if (!directory) {
+      continue;
+    }
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!ignoredDirectories.has(entry.name.toLowerCase())) {
+          directories.push(path.join(directory, entry.name));
+        }
+      } else if (entry.isFile() && /\.(?:src|sub|dat)$/i.test(entry.name)) {
+        files.push(path.join(directory, entry.name));
+      }
+    }
+  }
+  return files;
 }
 
 function normalizePath(filePath: string): string {
-  return normalizeProjectPath(filePath);
+  const normalized = path.resolve(filePath);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 function uriKey(uri: vscode.Uri): string {
   return uri.scheme === 'file' ? normalizePath(uri.fsPath) : uri.toString();
 }
 
+function pathDistance(leftPath: string, rightPath: string): number {
+  const left = path.normalize(leftPath).toLowerCase().split(path.sep).filter(Boolean);
+  const right = path.normalize(rightPath).toLowerCase().split(path.sep).filter(Boolean);
+  let common = 0;
+  while (common < Math.min(left.length, right.length) && left[common] === right[common]) {
+    common += 1;
+  }
+  return left.length - common + right.length - common;
+}
 
 function positionForOffset(definition: IndexedKrlVariable, offset: number): vscode.Position {
   return new vscode.Position(definition.line, Math.max(0, offset - definition.lineStartOffset));
