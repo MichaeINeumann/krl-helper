@@ -1047,6 +1047,52 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('uses unsaved config declarations from a discarded file-symlink alias', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `symlink-config-file-${Date.now()}`));
+    const programUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program');
+    const systemUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System');
+    const sourceUri = vscode.Uri.joinPath(programUri, 'standalone.src');
+    const configUri = vscode.Uri.joinPath(systemUri, '$config.dat');
+    const aliasUri = vscode.Uri.joinPath(systemUri, 'config-alias.dat');
+    await vscode.workspace.fs.createDirectory(programUri);
+    await vscode.workspace.fs.createDirectory(systemUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(
+      'DEF Standalone()\n  bAliasConfig = TRUE\n  bStillMissing = TRUE\nEND\n'
+    ));
+    await vscode.workspace.fs.writeFile(configUri, Buffer.from('DEFDAT $CONFIG\nENDDAT\n'));
+    await fs.promises.symlink(configUri.fsPath, aliasUri.fsPath, 'file');
+
+    try {
+      const aliasDocument = await vscode.workspace.openTextDocument(aliasUri);
+      const aliasEditor = await vscode.window.showTextDocument(aliasDocument);
+      assert.ok(await aliasEditor.edit(edit =>
+        edit.insert(new vscode.Position(1, 0), 'DECL BOOL bAliasConfig\n')
+      ));
+
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bStillMissing'"))
+      );
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bAliasConfig'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bAliasConfig'))
+      );
+      assert.strictEqual(definitions.length, 1);
+      assert.strictEqual(definitions[0].uri.toString(), aliasUri.toString());
+      assert.ok(await aliasDocument.save());
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('excludes directives, KRL keywords, and I/O aliases from generic prefix diagnostics', async () => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(workspaceFolder);

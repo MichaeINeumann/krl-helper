@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { sanitizeForAnalysis } from './diagnosticSanitizer';
-import { findOpenProjectDocument } from './projectDocuments';
+import { createOpenProjectDocumentIndex, OpenProjectDocumentIndex } from './projectDocuments';
 import {
   classifyVariable,
   collectDeclarations,
@@ -405,8 +405,9 @@ async function getProjectDeclarations(root: string): Promise<ProjectDeclarationI
 async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclarationIndex> {
   const names = new Set<string>();
   const files = await scanProjectDeclarationFiles(root);
+  const openDocuments = await createOpenProjectDocumentIndex();
   for (const filePath of files) {
-    const text = await readProjectFileText(filePath);
+    const text = await readProjectFileText(filePath, openDocuments);
     if (!text) {
       continue;
     }
@@ -428,8 +429,12 @@ async function scanProjectDeclarationFiles(root: string): Promise<string[]> {
   return scanProjectTree(root, isKrlDeclarationFile);
 }
 
-async function readProjectFileText(filePath: string): Promise<string | null> {
-  const openDocument = await findOpenProjectDocument(filePath);
+async function readProjectFileText(
+  filePath: string,
+  openDocuments?: OpenProjectDocumentIndex
+): Promise<string | null> {
+  const documents = openDocuments ?? await createOpenProjectDocumentIndex();
+  const openDocument = await documents.find(filePath);
   if (openDocument) {
     return openDocument.getText();
   }
@@ -718,7 +723,8 @@ async function readCachedFile(filePath: string): Promise<CachedText | null> {
 }
 
 async function readConfigAliases(configPath: string): Promise<Set<string>> {
-  const openDocument = await findOpenProjectDocument(configPath);
+  const openDocuments = await createOpenProjectDocumentIndex();
+  const openDocument = await openDocuments.find(configPath);
   if (openDocument) {
     return parseConfigAliases(openDocument.getText());
   }
