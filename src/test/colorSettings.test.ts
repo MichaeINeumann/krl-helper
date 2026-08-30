@@ -2,19 +2,21 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   colorSettingsHtml,
-  cleanLegacyWorkspaceHelperRules,
   CompletePalettes,
   legacyUserColors,
   mergeLegacyPaletteSources,
   paletteMigrationValue,
   persistPalettes,
+  postMessageToCurrentPanel,
   removeAllHelperColors,
   TextMateRule,
   themePaletteTargets,
   themeSelectorForKind,
   TokenColorCustomizations,
+  synchronizeWorkspaceHelperRules,
   updateCustomizationTargets,
   updateCustomizationValue,
+  updateWorkspaceCustomizationTargets,
   validateSubmittedPalettes
 } from '../colorSettings';
 
@@ -220,9 +222,12 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(cleaned, customizations);
   });
 
-  test('cleans current workspace helper rules idempotently without stored migration state', async () => {
+  test('keeps helper rules effective beneath an existing workspace theme override', async () => {
     const configuration = vscode.workspace.getConfiguration('editor');
     const previousValue = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
+    const themeName = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme', '').trim();
+    assert.ok(themeName);
+    const themeSelector = `[${themeName}]`;
     const foreignRule: TextMateRule = {
       name: 'Synthetic user rule',
       scope: 'source.krl',
@@ -231,14 +236,20 @@ suite('KRL syntax color configuration', () => {
 
     try {
       await configuration.update('tokenColorCustomizations', {
-        textMateRules: [foreignRule, helperRule('Regular text', '#C0C0C0')]
+        textMateRules: [helperRule('Comments', '#00FF00')],
+        [themeSelector]: { textMateRules: [foreignRule] },
+        '[Unused Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] }
       }, vscode.ConfigurationTarget.Workspace);
 
-      await cleanLegacyWorkspaceHelperRules();
-      await cleanLegacyWorkspaceHelperRules();
+      const targets = [{ selector: themeSelector, palette: 'dark' as const }];
+      await synchronizeWorkspaceHelperRules(true, targets);
+      await synchronizeWorkspaceHelperRules(true, targets);
 
-      const cleaned = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
-      assert.deepStrictEqual(cleaned?.textMateRules, [foreignRule]);
+      const synchronized = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
+      assert.deepStrictEqual(synchronized?.textMateRules, []);
+      assert.ok(rulesAt(synchronized ?? {}, themeSelector).some(rule => rule.name === foreignRule.name));
+      assert.strictEqual(helperRulesAt(synchronized ?? {}, themeSelector).length, 19);
+      assert.strictEqual(helperRulesAt(synchronized ?? {}, '[Unused Theme]').length, 0);
     } finally {
       await configuration.update(
         'tokenColorCustomizations',
@@ -246,6 +257,24 @@ suite('KRL syntax color configuration', () => {
         vscode.ConfigurationTarget.Workspace
       );
     }
+  });
+
+  test('does not create workspace theme overrides that the user did not configure', () => {
+    const foreignRule: TextMateRule = {
+      name: 'Synthetic user rule',
+      scope: 'source.krl',
+      settings: { foreground: '#123456' }
+    };
+    const current: TokenColorCustomizations = {
+      '[Different Theme]': { textMateRules: [foreignRule] }
+    };
+
+    const updated = updateWorkspaceCustomizationTargets(current, true, [
+      { selector: '[Dark Test Theme]', palette: 'dark' }
+    ]);
+
+    assert.strictEqual(updated, current);
+    assert.strictEqual(updated['[Dark Test Theme]'], undefined);
   });
 
   test('reads update-stable palettes from VS Code user configuration', async () => {
@@ -412,6 +441,40 @@ suite('KRL syntax color configuration', () => {
       /No palette changes were applied/
     );
     assert.strictEqual(updateCount, 1);
+  });
+
+  test('delivers asynchronous responses only to the panel that initiated the request', async () => {
+    const sourceMessages: unknown[] = [];
+    const replacementMessages: unknown[] = [];
+    const sourcePanel = {
+      webview: {
+        postMessage: async (message: unknown): Promise<boolean> => {
+          sourceMessages.push(message);
+          return true;
+        }
+      }
+    };
+    const replacementPanel = {
+      webview: {
+        postMessage: async (message: unknown): Promise<boolean> => {
+          replacementMessages.push(message);
+          return true;
+        }
+      }
+    };
+
+    assert.strictEqual(
+      await postMessageToCurrentPanel(sourcePanel, replacementPanel, { type: 'saved' }),
+      false
+    );
+    assert.deepStrictEqual(sourceMessages, []);
+    assert.deepStrictEqual(replacementMessages, []);
+
+    assert.strictEqual(
+      await postMessageToCurrentPanel(sourcePanel, sourcePanel, { type: 'saved' }),
+      true
+    );
+    assert.deepStrictEqual(sourceMessages, [{ type: 'saved' }]);
   });
 
   test('settings editor renders color and diagnostics tabs with palette defaults', () => {

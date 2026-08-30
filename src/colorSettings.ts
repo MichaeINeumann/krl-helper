@@ -89,6 +89,12 @@ interface PaletteConfiguration {
   update(section: string, value: unknown, target: vscode.ConfigurationTarget): Thenable<void>;
 }
 
+export interface PanelMessageTarget {
+  webview: {
+    postMessage(message: unknown): Thenable<boolean>;
+  };
+}
+
 class PalettePersistenceError extends Error {}
 
 function activePalette(): PaletteName {
@@ -359,7 +365,8 @@ export async function synchronizeTokenColors(): Promise<void> {
     ? inspected.globalValue
     : {};
   const enabled = vscode.workspace.getConfiguration('krlHighlighting').get<boolean>('applyCustomColors', true);
-  const nextValue = updateCustomizationTargets(currentValue, enabled, configuredThemeTargets());
+  const targets = configuredThemeTargets();
+  const nextValue = updateCustomizationTargets(currentValue, enabled, targets);
 
   if (!valuesEqual(currentValue, nextValue)) {
     await editorConfiguration.update(
@@ -368,6 +375,7 @@ export async function synchronizeTokenColors(): Promise<void> {
       vscode.ConfigurationTarget.Global
     );
   }
+  await synchronizeWorkspaceHelperRules(enabled, targets);
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
@@ -433,6 +441,51 @@ export function updateCustomizationTargets(
         ...activeRules
       ]
     };
+  }
+  return nextValue;
+}
+
+/**
+ * Mirrors managed rules only into existing workspace theme overrides.
+ *
+ * VS Code merges `editor.tokenColorCustomizations` by configuration layer, but a workspace-level
+ * theme object replaces the matching User-level object. Keeping the managed rules in that existing
+ * object prevents unrelated workspace TextMate rules from masking KRL colors without creating new
+ * workspace overrides where none existed.
+ */
+export function updateWorkspaceCustomizationTargets(
+  currentValue: TokenColorCustomizations,
+  enabled: boolean,
+  targets: readonly ThemePaletteTarget[]
+): TokenColorCustomizations {
+  const cleanedValue = removeAllHelperColors(currentValue);
+  if (!enabled) {
+    return cleanedValue;
+  }
+
+  const targetsBySelector = new Map(
+    targets.filter(target => target.selector).map(target => [target.selector, target])
+  );
+  let nextValue = cleanedValue;
+  for (const [selector, value] of Object.entries(cleanedValue)) {
+    const target = targetsBySelector.get(selector);
+    if (!target || !value || typeof value !== 'object' || Array.isArray(value)) {
+      continue;
+    }
+    const themeValue = value as TokenColorCustomizations;
+    const nextThemeValue: TokenColorCustomizations = {
+      ...themeValue,
+      textMateRules: [
+        ...rulesWithoutHelperColors(themeValue.textMateRules),
+        ...buildRules(target.palette)
+      ]
+    };
+    if (!valuesEqual(themeValue, nextThemeValue)) {
+      if (nextValue === cleanedValue) {
+        nextValue = { ...cleanedValue };
+      }
+      nextValue[selector] = nextThemeValue;
+    }
   }
   return nextValue;
 }
@@ -566,36 +619,34 @@ function synchronizeSafely(): void {
   void queueColorUpdate(() => synchronizeTokenColors());
 }
 
-async function cleanLegacyHelperRules(
+async function synchronizeWorkspaceLayer(
   configuration: vscode.WorkspaceConfiguration,
   target: vscode.ConfigurationTarget,
-  value: TokenColorCustomizations | undefined
+  value: TokenColorCustomizations | undefined,
+  enabled: boolean,
+  targets: readonly ThemePaletteTarget[]
 ): Promise<void> {
   if (!value || typeof value !== 'object') {
     return;
   }
-  const cleanedValue = removeAllHelperColors(value);
-  if (!valuesEqual(value, cleanedValue)) {
-    await configuration.update('tokenColorCustomizations', cleanedValue, target);
+  const nextValue = updateWorkspaceCustomizationTargets(value, enabled, targets);
+  if (!valuesEqual(value, nextValue)) {
+    await configuration.update('tokenColorCustomizations', nextValue, target);
   }
 }
 
-export async function cleanLegacyWorkspaceHelperRules(): Promise<void> {
+export async function synchronizeWorkspaceHelperRules(
+  enabled: boolean,
+  targets: readonly ThemePaletteTarget[]
+): Promise<void> {
   const workspaceConfiguration = vscode.workspace.getConfiguration('editor');
-  await cleanLegacyHelperRules(
+  await synchronizeWorkspaceLayer(
     workspaceConfiguration,
     vscode.ConfigurationTarget.Workspace,
-    workspaceConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue
+    workspaceConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue,
+    enabled,
+    targets
   );
-
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    const folderConfiguration = vscode.workspace.getConfiguration('editor', folder.uri);
-    await cleanLegacyHelperRules(
-      folderConfiguration,
-      vscode.ConfigurationTarget.WorkspaceFolder,
-      folderConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceFolderValue
-    );
-  }
 }
 
 /**
@@ -627,7 +678,6 @@ async function migrateLegacyPalettes(): Promise<void> {
 async function initializeTokenColors(): Promise<void> {
   await migrateLegacyPalettes();
   await synchronizeTokenColors();
-  await cleanLegacyWorkspaceHelperRules();
 }
 
 function colorPickerValue(value: string): string {
@@ -993,26 +1043,32 @@ export function colorSettingsHtml(
 }
 
 export async function openColorSettings(context: vscode.ExtensionContext): Promise<void> {
-  if (colorPanel) {
-    colorPanel.reveal(vscode.ViewColumn.One);
-    await colorPanel.webview.postMessage({ type: 'palettesState', colors: paletteSettingsView() });
-    await colorPanel.webview.postMessage({ type: 'diagnosticsState', state: diagnosticSettingsView() });
+  const existingPanel = colorPanel;
+  if (existingPanel) {
+    existingPanel.reveal(vscode.ViewColumn.One);
+    await existingPanel.webview.postMessage({ type: 'palettesState', colors: paletteSettingsView() });
+    await existingPanel.webview.postMessage({ type: 'diagnosticsState', state: diagnosticSettingsView() });
     return;
   }
 
-  colorPanel = vscode.window.createWebviewPanel(
+  const panel = vscode.window.createWebviewPanel(
     'krlHelperSettings',
     'KRL Helper Settings',
     vscode.ViewColumn.One,
     { enableScripts: true }
   );
-  colorPanel.webview.html = colorSettingsHtml(colorPanel.webview);
-  colorPanel.onDidDispose(() => { colorPanel = undefined; }, null, context.subscriptions);
-  colorPanel.webview.onDidReceiveMessage(async message => {
+  colorPanel = panel;
+  panel.webview.html = colorSettingsHtml(panel.webview);
+  panel.onDidDispose(() => {
+    if (colorPanel === panel) {
+      colorPanel = undefined;
+    }
+  }, null, context.subscriptions);
+  panel.webview.onDidReceiveMessage(async message => {
     if (message?.type === 'save') {
       const colors = validateSubmittedPalettes(message.colors);
       if (!colors) {
-        await colorPanel?.webview.postMessage({
+        await postMessageToCurrentPanel(panel, colorPanel, {
           type: 'saveError',
           message: 'The palettes contain an invalid hexadecimal color. Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.'
         });
@@ -1031,10 +1087,10 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
           : palettesPersisted
             ? 'The palettes were saved, but the syntax colors could not be applied. Retry or reload VS Code.'
             : 'The palettes could not be saved. No palette changes were applied.';
-        await colorPanel?.webview.postMessage({ type: 'saveError', message });
+        await postMessageToCurrentPanel(panel, colorPanel, { type: 'saveError', message });
         return;
       }
-      await colorPanel?.webview.postMessage({ type: 'saved' });
+      await postMessageToCurrentPanel(panel, colorPanel, { type: 'saved' });
     } else if (message?.type === 'diagnosticUpdate' || message?.type === 'diagnosticReset') {
       const definition = diagnosticSettingDefinitions.find(candidate => candidate.key === message.key);
       const scope = message.scope === 'workspace' ? 'workspace' : message.scope === 'user' ? 'user' : undefined;
@@ -1047,13 +1103,23 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
       const value = message.type === 'diagnosticReset' ? undefined : normalizePrefixList(message.values);
       await vscode.workspace.getConfiguration('krlHelper.diagnostics').update(definition.key, value, target);
       const action = message.type === 'diagnosticReset' ? 'reset' : 'updated';
-      await colorPanel?.webview.postMessage({
+      await postMessageToCurrentPanel(panel, colorPanel, {
         type: 'diagnosticsState',
         state: diagnosticSettingsView(),
         message: `${definition.label} ${action} for ${scope === 'workspace' ? 'Workspace' : 'User'}.`
       });
     }
   }, null, context.subscriptions);
+}
+
+export async function postMessageToCurrentPanel(
+  sourcePanel: PanelMessageTarget,
+  currentPanel: PanelMessageTarget | undefined,
+  message: unknown
+): Promise<boolean> {
+  return sourcePanel === currentPanel
+    ? sourcePanel.webview.postMessage(message)
+    : false;
 }
 
 export function initializeColorSettings(context: vscode.ExtensionContext): void {
