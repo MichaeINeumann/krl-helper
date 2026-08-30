@@ -179,27 +179,32 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
   const sourceText = document.getText();
   const localNames = new Set<string>();
   const globalNames = new Set<string>();
+  const explicitGlobalNames = new Set<string>();
   const companionDat = findCompanionDat(sourcePath);
   if (companionDat) {
     const datText = await readProjectFileText(companionDat);
     if (datText) {
       collectDeclarations(datText, localNames);
-      collectProjectDatDeclarations(companionDat, datText, globalNames);
+      collectProjectDatDeclarations(companionDat, datText, explicitGlobalNames);
     }
   }
   collectDeclarations(sourceText, localNames);
   collectFunctionParameters(sourceText, localNames);
-  collectGlobalSourceDeclarations(sourceText, globalNames);
+  collectGlobalSourceDeclarations(sourceText, explicitGlobalNames);
 
   const declarationRoot = findDeclarationProjectRoot(sourcePath, document);
   if (declarationRoot) {
     const projectDeclarations = await getProjectDeclarations(declarationRoot);
     for (const name of projectDeclarations.names) {
-      globalNames.add(name);
+      explicitGlobalNames.add(name);
     }
   }
 
-  const configDat = findConfigDat(sourcePath, document);
+  for (const name of explicitGlobalNames) {
+    globalNames.add(name);
+  }
+
+  const configDat = findConfigDat(sourcePath);
   const dependencyPaths = [companionDat, configDat].filter((item): item is string => Boolean(item));
   updateDocumentDependencies(document.uri.toString(), dependencyPaths);
 
@@ -215,7 +220,14 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
   const sanitizedText = sanitizeForAnalysis(sourceText);
   const diagnostics: vscode.Diagnostic[] = [
     ...findIoAliasDiagnostics(sanitizedText, document, configuredAliases, prefixConfiguration),
-    ...findUndeclaredDiagnostics(sanitizedText, document, localNames, globalNames, prefixConfiguration)
+    ...findUndeclaredDiagnostics(
+      sanitizedText,
+      document,
+      localNames,
+      globalNames,
+      explicitGlobalNames,
+      prefixConfiguration
+    )
   ];
   diagnosticCollection?.set(document.uri, diagnostics);
 }
@@ -363,15 +375,18 @@ function findDeclarationProjectRoot(sourcePath: string, document: vscode.TextDoc
   const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
     ?? workspaceRoots.find(root => isPathInside(sourcePath, root))
     ?? null;
-  const krcR1Root = findKrcR1Root(sourcePath);
 
-  if (krcR1Root && (!workspaceRoot || isPathInside(krcR1Root, workspaceRoot))) {
-    return krcR1Root;
-  }
-  return workspaceRoot ?? krcR1Root;
+  return declarationProjectRoot(sourcePath, workspaceRoot);
+}
+
+export function declarationProjectRoot(sourcePath: string, workspaceRoot: string | null): string | null {
+  return findKrcR1Root(sourcePath) ?? workspaceRoot;
 }
 
 async function getProjectDeclarations(root: string): Promise<ProjectDeclarationIndex> {
+  if (!workspaceRoots.some(workspaceRoot => isPathInside(root, workspaceRoot))) {
+    return buildProjectDeclarationIndex(root);
+  }
   const cacheKey = normalizePathKey(root);
   const cached = projectDeclarationCache.get(cacheKey);
   if (cached) {
@@ -409,7 +424,9 @@ async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclar
     }
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.dat') {
-      collectProjectDatDeclarations(filePath, text, names);
+      if (path.basename(filePath).toLowerCase() !== '$config.dat') {
+        collectProjectDatDeclarations(filePath, text, names);
+      }
     } else {
       collectGlobalSourceDeclarations(text, names);
     }
@@ -521,6 +538,7 @@ function findUndeclaredDiagnostics(
   document: vscode.TextDocument,
   localNames: Set<string>,
   globalNames: Set<string>,
+  explicitGlobalNames: Set<string>,
   configuration: DiagnosticPrefixConfiguration
 ): vscode.Diagnostic[] {
   const diagnostics: vscode.Diagnostic[] = [];
@@ -541,8 +559,9 @@ function findUndeclaredDiagnostics(
         || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
       continue;
     }
-    const declared = globalNames.has(normalized)
-      || (scope === 'local' && localNames.has(normalized));
+    const declared = scope === 'global'
+      ? globalNames.has(normalized)
+      : localNames.has(normalized) || explicitGlobalNames.has(normalized);
     if (ignoredIdentifiers.has(normalized) || declared) {
       continue;
     }
@@ -647,28 +666,26 @@ function findCompanionDat(sourcePath: string): string | null {
   }
 }
 
-function findConfigDat(sourcePath: string, document: vscode.TextDocument): string | null {
-  const krcR1Root = findKrcR1Root(sourcePath);
-  let candidateRoots: string[];
-  if (krcR1Root) {
-    const directPath = path.join(krcR1Root, 'System', '$config.dat');
+function findConfigDat(sourcePath: string): string | null {
+  const projectRoot = findProjectRoot(sourcePath);
+  if (projectRoot) {
+    const directPath = path.join(projectRoot, 'KRC', 'R1', 'System', '$config.dat');
     if (fs.existsSync(directPath)) {
       return directPath;
     }
-    candidateRoots = [krcR1Root];
-  } else {
-    const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
-    if (!workspaceRoot) {
-      return null;
-    }
-    candidateRoots = [workspaceRoot];
   }
-  const systemCandidates = getConfigCandidates(true, candidateRoots);
+
+  const systemCandidates = getConfigCandidates(true);
   if (systemCandidates.length > 0) {
     return nearestPath(sourcePath, systemCandidates);
   }
-  const anyCandidates = getConfigCandidates(false, candidateRoots);
+  const anyCandidates = getConfigCandidates(false);
   return anyCandidates.length > 0 ? nearestPath(sourcePath, anyCandidates) : null;
+}
+
+function findProjectRoot(filePath: string): string | null {
+  const krcR1Root = findKrcR1Root(filePath);
+  return krcR1Root ? path.dirname(path.dirname(krcR1Root)) : null;
 }
 
 function findKrcR1Root(filePath: string): string | null {
@@ -688,10 +705,10 @@ function findKrcR1Root(filePath: string): string | null {
   return null;
 }
 
-function getConfigCandidates(systemOnly: boolean, roots: readonly string[]): string[] {
+function getConfigCandidates(systemOnly: boolean): string[] {
   const now = Date.now();
   const candidates: string[] = [];
-  for (const workspaceRoot of roots) {
+  for (const workspaceRoot of workspaceRoots) {
     let scan = workspaceScanCache.get(workspaceRoot);
     if (!scan || now - scan.lastScanMs > workspaceScanTtlMs) {
       const systemConfigs: string[] = [];

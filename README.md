@@ -102,7 +102,7 @@ The Diagnostics tab and native VS Code Settings expose four array settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `krlHelper.diagnostics.localVariablePrefixes` | `["b", "n"]` | Variables that prefer a local declaration and can fall back to a visible project global |
+| `krlHelper.diagnostics.localVariablePrefixes` | `["b", "n"]` | Variables that prefer a local declaration and can fall back to a visible explicit `GLOBAL` declaration |
 | `krlHelper.diagnostics.globalVariablePrefixes` | `["b_", "n_"]` | Variables that require a global declaration |
 | `krlHelper.diagnostics.inputAliasPrefixes` | `["i_"]` | `$IN[...]` aliases that must exist in `$config.dat` |
 | `krlHelper.diagnostics.outputAliasPrefixes` | `["o_"]` | `$OUT[...]` aliases that must exist in `$config.dat` |
@@ -117,7 +117,7 @@ Local declarations are taken from the current `.src` or `.sub`, its function par
 - declarations with an explicit `GLOBAL` modifier in another DAT only when that DAT has a case-insensitive `DEFDAT <Name> PUBLIC` header; and
 - explicit global declarations in project `.src` and `.sub` files.
 
-KRL permits the DAT forms `DECL GLOBAL <type>`, `GLOBAL DECL <type>`, and `GLOBAL <type>`. All three participate in the same project-global visibility rules. A local-prefixed reference first uses a valid local declaration and otherwise falls back to a visible project global.
+KRL permits the DAT forms `DECL GLOBAL <type>`, `GLOBAL DECL <type>`, and `GLOBAL <type>`. All three participate in the same project-global visibility rules. A local-prefixed reference first uses a valid local declaration and otherwise falls back to a visible explicit `GLOBAL` declaration.
 
 The diagnostics check declaration existence and visibility. They do not yet validate whether a prefix agrees with the declared KRL data type.
 

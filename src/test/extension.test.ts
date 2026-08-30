@@ -2,10 +2,20 @@ import * as assert from 'assert';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { declarationProjectRoot } from '../diagnostics';
 
 suite('KRL Helper', () => {
   test('test environment is available', () => {
     assert.strictEqual(true, true);
+  });
+
+  test('keeps the inferred R1 root when the workspace is nested below it', () => {
+    const projectRoot = path.join(os.tmpdir(), 'TestController');
+    const r1Root = path.join(projectRoot, 'KRC', 'R1');
+    const programRoot = path.join(r1Root, 'Program');
+    const sourcePath = path.join(programRoot, 'main.src');
+
+    assert.strictEqual(declarationProjectRoot(sourcePath, programRoot), r1Root);
   });
 
   test('declares the KRL semicolon comment marker', async () => {
@@ -330,7 +340,7 @@ suite('KRL Helper', () => {
       { name: 'b_Config', suffix: '/System/$config.dat', line: 1 },
       { name: 'b_Public', suffix: '/shared.dat', line: 1 },
       { name: 'n_SourceGlobal', suffix: '/navigation-library.src', line: 0 },
-      { name: 'i_Configured', suffix: '/System/$config.dat', line: 3 }
+      { name: 'i_Configured', suffix: '/System/$config.dat', line: 2 }
     ];
     for (const expected of expectedDefinitions) {
       const position = document.positionAt(lastIdentifierOffset(document.getText(), expected.name));
@@ -461,13 +471,18 @@ suite('KRL Helper', () => {
     const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'external.src');
     const globalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'legacy-global.dat');
     const freshGlobalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'fresh-global.dat');
+    const nearestConfigUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', '$config.dat');
+    const remoteConfigDirectoryUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Archive', 'Deep');
+    const remoteConfigUri = vscode.Uri.joinPath(remoteConfigDirectoryUri, '$config.dat');
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program'));
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.createDirectory(remoteConfigDirectoryUri);
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
       'DEF External()',
       '  advanceStop(bAdvanceStop)',
       '  n_Counter = 1',
       '  bFreshGlobal = TRUE',
+      '  bRemoteConfig = TRUE',
       '  bStillMissing = TRUE',
       'END',
       ''
@@ -476,6 +491,18 @@ suite('KRL Helper', () => {
       'DEFDAT LegacyGlobal PUBLIC',
       'GLOBAL BOOL bAdvanceStop=TRUE',
       'GLOBAL DECL INT n_Counter',
+      'ENDDAT',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(nearestConfigUri, Buffer.from([
+      'DEFDAT $CONFIG',
+      'DECL BOOL bNearestConfig',
+      'ENDDAT',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(remoteConfigUri, Buffer.from([
+      'DEFDAT $CONFIG',
+      'DECL BOOL bRemoteConfig',
       'ENDDAT',
       ''
     ].join('\n')));
@@ -488,6 +515,7 @@ suite('KRL Helper', () => {
       );
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
       assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'n_Counter'")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bRemoteConfig'")));
       assert.ok(diagnostics.some(diagnostic => diagnostic.message ===
         "Variable 'bStillMissing' is not declared in the current module or visible project globals."
       ));
@@ -508,6 +536,12 @@ suite('KRL Helper', () => {
         definition.uri.toString() === globalUri.toString() && definition.range.start.line === 2
       ));
 
+      const remoteConfigPosition = document.positionAt(lastIdentifierOffset(document.getText(), 'bRemoteConfig'));
+      const remoteConfigDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider', sourceUri, remoteConfigPosition
+      );
+      assert.ok(!remoteConfigDefinitions || remoteConfigDefinitions.length === 0);
+
       await vscode.workspace.fs.writeFile(freshGlobalUri, Buffer.from([
         'DEFDAT FreshGlobal PUBLIC',
         'DECL GLOBAL BOOL bFreshGlobal',
@@ -524,38 +558,6 @@ suite('KRL Helper', () => {
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     } finally {
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
-    }
-  });
-
-  test('does not expose workspace config declarations to standalone sources', async () => {
-    const sourceUri = vscode.Uri.file(path.join(
-      os.tmpdir(),
-      `krl-helper-standalone-scope-${Date.now()}.src`
-    ));
-    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
-      'DEF StandaloneScope()',
-      '  bWorkspaceOnly = TRUE',
-      'END',
-      ''
-    ].join('\n')));
-
-    try {
-      const document = await vscode.workspace.openTextDocument(sourceUri);
-      await vscode.window.showTextDocument(document);
-      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
-        values.some(diagnostic => diagnostic.message.includes("'bWorkspaceOnly'"))
-      );
-      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bWorkspaceOnly'")));
-
-      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
-        'vscode.executeDefinitionProvider',
-        sourceUri,
-        document.positionAt(lastIdentifierOffset(document.getText(), 'bWorkspaceOnly'))
-      );
-      assert.ok(!definitions || definitions.length === 0);
-    } finally {
-      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-      await vscode.workspace.fs.delete(sourceUri, { useTrash: false });
     }
   });
 

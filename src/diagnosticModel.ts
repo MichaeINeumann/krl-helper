@@ -7,7 +7,7 @@ export const diagnosticSettingDefinitions = [
     key: 'localVariablePrefixes',
     fullKey: 'krlHelper.diagnostics.localVariablePrefixes',
     label: 'Local variable prefixes',
-    description: 'Variables that need a visible declaration, preferring the current module before project globals.',
+    description: 'Variables that need a visible declaration, preferring the current module before explicit project globals.',
     defaultValue: ['b', 'n']
   },
   {
