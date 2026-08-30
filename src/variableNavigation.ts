@@ -7,6 +7,7 @@ import {
   DiagnosticPrefixConfiguration,
   diagnosticSettingDefinitions,
   hasPublicDefdatHeader,
+  isExplicitProjectGlobalDeclaration,
   normalizePrefixConfiguration
 } from './diagnosticModel';
 import {
@@ -144,16 +145,12 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
       return !currentRoutine || definition.routineStartOffset === currentRoutine.startOffset;
     });
     const globalDefinitions = selectGlobalDefinitions(document.uri, allDefinitions, indexedDefinitions);
-    const navigationGlobalDefinitions = selectNavigationGlobalDefinitions(
-      globalDefinitions,
-      allDefinitions
-    );
     const scope = classifyVariable(identifier, readPrefixConfiguration());
     const visible = scope === 'local'
-      ? localDefinitions.length > 0 ? localDefinitions : navigationGlobalDefinitions
+      ? localDefinitions.length > 0 ? localDefinitions : globalDefinitions
       : scope === 'global'
-        ? navigationGlobalDefinitions
-        : [...localDefinitions, ...navigationGlobalDefinitions];
+        ? globalDefinitions
+        : [...localDefinitions, ...globalDefinitions];
     return deduplicateDefinitions(visible);
   }
 
@@ -255,7 +252,7 @@ function selectGlobalDefinitions(
   const nearestConfigId = selectNearestConfigId(currentUri, configDefinitions);
   return definitions.filter(definition => {
     if (definition.fileKind === 'source') {
-      return definition.kind === 'declaration' && definition.global;
+      return isExplicitProjectGlobalDeclaration(definition);
     }
     if (definition.fileKind !== 'dat') {
       return false;
@@ -263,22 +260,8 @@ function selectGlobalDefinitions(
     if (definition.configDat) {
       return nearestConfigId !== undefined && definition.sourceId === nearestConfigId;
     }
-    return definition.publicDat && definition.kind === 'declaration' && definition.declGlobal;
+    return definition.publicDat && isExplicitProjectGlobalDeclaration(definition);
   });
-}
-
-function selectNavigationGlobalDefinitions(
-  strictDefinitions: IndexedKrlVariable[],
-  matchingDefinitions: IndexedKrlVariable[]
-): IndexedKrlVariable[] {
-  const legacyPublicDatGlobals = matchingDefinitions.filter(definition =>
-    definition.fileKind === 'dat'
-    && !definition.configDat
-    && definition.publicDat
-    && definition.kind === 'declaration'
-    && definition.global
-  );
-  return deduplicateDefinitions([...strictDefinitions, ...legacyPublicDatGlobals]);
 }
 
 function selectNearestConfigId(

@@ -179,24 +179,29 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
   const sourceText = document.getText();
   const localNames = new Set<string>();
   const globalNames = new Set<string>();
+  const explicitGlobalNames = new Set<string>();
   const companionDat = findCompanionDat(sourcePath);
   if (companionDat) {
     const datText = await readProjectFileText(companionDat);
     if (datText) {
       collectDeclarations(datText, localNames);
-      collectProjectDatDeclarations(companionDat, datText, globalNames);
+      collectProjectDatDeclarations(companionDat, datText, explicitGlobalNames);
     }
   }
   collectDeclarations(sourceText, localNames);
   collectFunctionParameters(sourceText, localNames);
-  collectGlobalSourceDeclarations(sourceText, globalNames);
+  collectGlobalSourceDeclarations(sourceText, explicitGlobalNames);
 
   const declarationRoot = findDeclarationProjectRoot(sourcePath, document);
   if (declarationRoot) {
     const projectDeclarations = await getProjectDeclarations(declarationRoot);
     for (const name of projectDeclarations.names) {
-      globalNames.add(name);
+      explicitGlobalNames.add(name);
     }
+  }
+
+  for (const name of explicitGlobalNames) {
+    globalNames.add(name);
   }
 
   const configDat = findConfigDat(sourcePath);
@@ -215,7 +220,14 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
   const sanitizedText = sanitizeForAnalysis(sourceText);
   const diagnostics: vscode.Diagnostic[] = [
     ...findIoAliasDiagnostics(sanitizedText, document, configuredAliases, prefixConfiguration),
-    ...findUndeclaredDiagnostics(sanitizedText, document, localNames, globalNames, prefixConfiguration)
+    ...findUndeclaredDiagnostics(
+      sanitizedText,
+      document,
+      localNames,
+      globalNames,
+      explicitGlobalNames,
+      prefixConfiguration
+    )
   ];
   diagnosticCollection?.set(document.uri, diagnostics);
 }
@@ -363,15 +375,18 @@ function findDeclarationProjectRoot(sourcePath: string, document: vscode.TextDoc
   const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
     ?? workspaceRoots.find(root => isPathInside(sourcePath, root))
     ?? null;
-  const krcProjectRoot = findProjectRoot(sourcePath);
 
-  if (krcProjectRoot && (!workspaceRoot || isPathInside(krcProjectRoot, workspaceRoot))) {
-    return krcProjectRoot;
-  }
-  return workspaceRoot ?? krcProjectRoot;
+  return declarationProjectRoot(sourcePath, workspaceRoot);
+}
+
+export function declarationProjectRoot(sourcePath: string, workspaceRoot: string | null): string | null {
+  return findKrcR1Root(sourcePath) ?? workspaceRoot;
 }
 
 async function getProjectDeclarations(root: string): Promise<ProjectDeclarationIndex> {
+  if (!workspaceRoots.some(workspaceRoot => isPathInside(root, workspaceRoot))) {
+    return buildProjectDeclarationIndex(root);
+  }
   const cacheKey = normalizePathKey(root);
   const cached = projectDeclarationCache.get(cacheKey);
   if (cached) {
@@ -409,7 +424,9 @@ async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclar
     }
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.dat') {
-      collectProjectDatDeclarations(filePath, text, names);
+      if (path.basename(filePath).toLowerCase() !== '$config.dat') {
+        collectProjectDatDeclarations(filePath, text, names);
+      }
     } else {
       collectGlobalSourceDeclarations(text, names);
     }
@@ -521,6 +538,7 @@ function findUndeclaredDiagnostics(
   document: vscode.TextDocument,
   localNames: Set<string>,
   globalNames: Set<string>,
+  explicitGlobalNames: Set<string>,
   configuration: DiagnosticPrefixConfiguration
 ): vscode.Diagnostic[] {
   const diagnostics: vscode.Diagnostic[] = [];
@@ -541,11 +559,15 @@ function findUndeclaredDiagnostics(
         || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
       continue;
     }
-    const declaredNames = scope === 'global' ? globalNames : localNames;
-    if (ignoredIdentifiers.has(normalized) || declaredNames.has(normalized)) {
+    const declared = scope === 'global'
+      ? globalNames.has(normalized)
+      : localNames.has(normalized) || explicitGlobalNames.has(normalized);
+    if (ignoredIdentifiers.has(normalized) || declared) {
       continue;
     }
-    const declarationSpace = scope === 'global' ? 'global project declarations' : 'the current module';
+    const declarationSpace = scope === 'global'
+      ? 'global project declarations'
+      : 'the current module or visible project globals';
     diagnostics.push(new vscode.Diagnostic(
       new vscode.Range(document.positionAt(match.index), document.positionAt(match.index + identifier.length)),
       `Variable '${identifier}' is not declared in ${declarationSpace}.`,
@@ -662,6 +684,11 @@ function findConfigDat(sourcePath: string): string | null {
 }
 
 function findProjectRoot(filePath: string): string | null {
+  const krcR1Root = findKrcR1Root(filePath);
+  return krcR1Root ? path.dirname(path.dirname(krcR1Root)) : null;
+}
+
+function findKrcR1Root(filePath: string): string | null {
   const normalized = path.normalize(filePath);
   const parsed = path.parse(normalized);
   const parts = normalized.slice(parsed.root.length).split(path.sep).filter(part => part.length > 0);
@@ -673,7 +700,7 @@ function findProjectRoot(filePath: string): string | null {
     }
   }
   if (krcIndex !== -1) {
-    return path.join(parsed.root, ...parts.slice(0, krcIndex));
+    return path.join(parsed.root, ...parts.slice(0, krcIndex + 2));
   }
   return null;
 }

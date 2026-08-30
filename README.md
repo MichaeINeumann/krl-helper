@@ -102,7 +102,7 @@ The Diagnostics tab and native VS Code Settings expose four array settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `krlHelper.diagnostics.localVariablePrefixes` | `["b", "n"]` | Variables that require a local declaration |
+| `krlHelper.diagnostics.localVariablePrefixes` | `["b", "n"]` | Variables that prefer a local declaration and can fall back to a visible explicit `GLOBAL` declaration |
 | `krlHelper.diagnostics.globalVariablePrefixes` | `["b_", "n_"]` | Variables that require a global declaration |
 | `krlHelper.diagnostics.inputAliasPrefixes` | `["i_"]` | `$IN[...]` aliases that must exist in `$config.dat` |
 | `krlHelper.diagnostics.outputAliasPrefixes` | `["o_"]` | `$OUT[...]` aliases that must exist in `$config.dat` |
@@ -114,8 +114,10 @@ Global prefixes are evaluated before local prefixes, so `b_Part` is global with 
 Local declarations are taken from the current `.src` or `.sub`, its function parameters, and its same-named companion `.dat`. Global-prefixed variables are checked only against the global declaration space; a normal local declaration does not satisfy that check. Global declarations come from:
 
 - every declaration in `$config.dat`;
-- `DECL GLOBAL` lines in another DAT only when that DAT has a case-insensitive `DEFDAT <Name> PUBLIC` header; and
+- declarations with an explicit `GLOBAL` modifier in another DAT only when that DAT has a case-insensitive `DEFDAT <Name> PUBLIC` header; and
 - explicit global declarations in project `.src` and `.sub` files.
+
+KRL permits the DAT forms `DECL GLOBAL <type>`, `GLOBAL DECL <type>`, and `GLOBAL <type>`. All three participate in the same project-global visibility rules. A local-prefixed reference first uses a valid local declaration and otherwise falls back to a visible explicit `GLOBAL` declaration.
 
 The diagnostics check declaration existence and visibility. They do not yet validate whether a prefix agrees with the declared KRL data type.
 
@@ -123,7 +125,7 @@ The diagnostics check declaration existence and visibility. They do not yet vali
 
 Function lookup is case-insensitive and supports `DEF`, `GLOBAL DEF`, `DEFFCT`, and `GLOBAL DEFFCT`. All functions in the current document are visible. From another `.src` or `.sub`, explicit global routines and the module entry routine whose name matches the source filename are visible. Other local helper routines remain private. Comments, known KRL built-ins, and unresolved calls produce no navigation result.
 
-Variable **Go to Definition** prioritizes the same visibility rules as diagnostics: current source declarations and parameters, the same-named companion DAT, `$config.dat`, public `DECL GLOBAL` DAT declarations, and explicit global source declarations. If no valid local declaration exists, navigation can still lead to a syntactic `GLOBAL <type>` declaration in a public DAT so that the visibility error can be inspected and repaired; this does not suppress the diagnostic. Prefix-classified global variables never fall back to a same-named local declaration. For individually opened files below a `KRC/R1` tree, navigation infers that tree as the project root. Both project indexes use unsaved open documents and refresh after file, editor, configuration, and workspace changes.
+Variable **Go to Definition** uses the same visibility rules as diagnostics: current source declarations and parameters, the same-named companion DAT, `$config.dat`, public DAT declarations with an explicit `GLOBAL` modifier, and explicit global source declarations. Local-prefixed variables fall back to a visible project global only when no valid local declaration exists; prefix-classified global variables never fall back to a same-named local declaration. For individually opened files below a `KRC/R1` tree, navigation infers that tree as the project root. Both project indexes use unsaved open documents and refresh after file, editor, configuration, and workspace changes.
 
 ## Limitations
 

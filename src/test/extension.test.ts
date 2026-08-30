@@ -2,10 +2,20 @@ import * as assert from 'assert';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { declarationProjectRoot } from '../diagnostics';
 
 suite('KRL Helper', () => {
   test('test environment is available', () => {
     assert.strictEqual(true, true);
+  });
+
+  test('keeps the inferred R1 root when the workspace is nested below it', () => {
+    const projectRoot = path.join(os.tmpdir(), 'TestController');
+    const r1Root = path.join(projectRoot, 'KRC', 'R1');
+    const programRoot = path.join(r1Root, 'Program');
+    const sourcePath = path.join(programRoot, 'main.src');
+
+    assert.strictEqual(declarationProjectRoot(sourcePath, programRoot), r1Root);
   });
 
   test('declares the KRL semicolon comment marker', async () => {
@@ -456,23 +466,43 @@ suite('KRL Helper', () => {
     }
   });
 
-  test('navigates to a legacy public DAT global without accepting it as locally visible', async () => {
+  test('uses public DAT GLOBAL declarations consistently for diagnostics and navigation', async () => {
     const projectUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-krc-project-${Date.now()}`));
     const sourceUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program', 'external.src');
     const globalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'legacy-global.dat');
     const freshGlobalUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', 'fresh-global.dat');
+    const nearestConfigUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System', '$config.dat');
+    const remoteConfigDirectoryUri = vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Archive', 'Deep');
+    const remoteConfigUri = vscode.Uri.joinPath(remoteConfigDirectoryUri, '$config.dat');
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'Program'));
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(projectUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.createDirectory(remoteConfigDirectoryUri);
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
       'DEF External()',
       '  advanceStop(bAdvanceStop)',
+      '  n_Counter = 1',
       '  bFreshGlobal = TRUE',
+      '  bRemoteConfig = TRUE',
+      '  bStillMissing = TRUE',
       'END',
       ''
     ].join('\n')));
     await vscode.workspace.fs.writeFile(globalUri, Buffer.from([
       'DEFDAT LegacyGlobal PUBLIC',
       'GLOBAL BOOL bAdvanceStop=TRUE',
+      'GLOBAL DECL INT n_Counter',
+      'ENDDAT',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(nearestConfigUri, Buffer.from([
+      'DEFDAT $CONFIG',
+      'DECL BOOL bNearestConfig',
+      'ENDDAT',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(remoteConfigUri, Buffer.from([
+      'DEFDAT $CONFIG',
+      'DECL BOOL bRemoteConfig',
       'ENDDAT',
       ''
     ].join('\n')));
@@ -481,9 +511,14 @@ suite('KRL Helper', () => {
       const document = await vscode.workspace.openTextDocument(sourceUri);
       await vscode.window.showTextDocument(document);
       const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
-        values.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'"))
+        values.some(diagnostic => diagnostic.message.includes("'bStillMissing'"))
       );
-      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bAdvanceStop'")));
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'n_Counter'")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bRemoteConfig'")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message ===
+        "Variable 'bStillMissing' is not declared in the current module or visible project globals."
+      ));
 
       const position = document.positionAt(lastIdentifierOffset(document.getText(), 'bAdvanceStop'));
       const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
@@ -492,6 +527,20 @@ suite('KRL Helper', () => {
       assert.ok(definitions.some(definition =>
         definition.uri.toString() === globalUri.toString() && definition.range.start.line === 1
       ));
+
+      const alternatePosition = document.positionAt(lastIdentifierOffset(document.getText(), 'n_Counter'));
+      const alternateDefinitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', sourceUri, alternatePosition
+      );
+      assert.ok(alternateDefinitions.some(definition =>
+        definition.uri.toString() === globalUri.toString() && definition.range.start.line === 2
+      ));
+
+      const remoteConfigPosition = document.positionAt(lastIdentifierOffset(document.getText(), 'bRemoteConfig'));
+      const remoteConfigDefinitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider', sourceUri, remoteConfigPosition
+      );
+      assert.ok(!remoteConfigDefinitions || remoteConfigDefinitions.length === 0);
 
       await vscode.workspace.fs.writeFile(freshGlobalUri, Buffer.from([
         'DEFDAT FreshGlobal PUBLIC',
@@ -509,6 +558,50 @@ suite('KRL Helper', () => {
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     } finally {
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });
+    }
+  });
+
+  test('keeps public DAT globals inside the source KRC/R1 tree', async () => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(workspaceFolder);
+    const suffix = Date.now().toString();
+    const sourceUri = vscode.Uri.joinPath(
+      workspaceFolder.uri, 'KRC', 'R1', 'Program', `scope-boundary-${suffix}.src`
+    );
+    const outsideDirectoryUri = vscode.Uri.joinPath(workspaceFolder.uri, `outside-r1-${suffix}`);
+    const outsideDatUri = vscode.Uri.joinPath(outsideDirectoryUri, 'foreign.dat');
+    await vscode.workspace.fs.createDirectory(outsideDirectoryUri);
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF ScopeBoundary()',
+      '  bOutOfTree = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(outsideDatUri, Buffer.from([
+      'DEFDAT Foreign PUBLIC',
+      'GLOBAL BOOL bOutOfTree',
+      'ENDDAT',
+      ''
+    ].join('\n')));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bOutOfTree'"))
+      );
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'bOutOfTree'")));
+
+      const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+        'vscode.executeDefinitionProvider',
+        sourceUri,
+        document.positionAt(lastIdentifierOffset(document.getText(), 'bOutOfTree'))
+      );
+      assert.ok(!definitions || definitions.length === 0);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await vscode.workspace.fs.delete(sourceUri, { useTrash: false });
+      await vscode.workspace.fs.delete(outsideDirectoryUri, { recursive: true, useTrash: false });
     }
   });
 
