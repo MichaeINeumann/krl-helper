@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { sanitizeForAnalysis } from './diagnosticSanitizer';
+import { findOpenProjectDocument } from './projectDocuments';
 import {
   classifyVariable,
   collectDeclarations,
@@ -18,6 +19,7 @@ import {
   isConfigDat,
   isProjectDeclarationFile as isKrlDeclarationFile,
   normalizeProjectPath,
+  projectRootForSource,
   scanProjectTree,
   scanProjectTreeSync,
   selectNearestPath
@@ -369,12 +371,7 @@ function findDeclarationProjectRoot(sourcePath: string, document: vscode.TextDoc
   const workspaceRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
     ?? workspaceRoots.find(root => isPathInside(sourcePath, root))
     ?? null;
-  const krlTreeRoot = inferKrlTreeRoot(sourcePath);
-
-  if (krlTreeRoot && (!workspaceRoot || isPathInside(krlTreeRoot, workspaceRoot))) {
-    return krlTreeRoot;
-  }
-  return workspaceRoot ?? krlTreeRoot;
+  return projectRootForSource(sourcePath, workspaceRoot);
 }
 
 async function getProjectDeclarations(root: string): Promise<ProjectDeclarationIndex> {
@@ -432,10 +429,7 @@ async function scanProjectDeclarationFiles(root: string): Promise<string[]> {
 }
 
 async function readProjectFileText(filePath: string): Promise<string | null> {
-  const key = normalizePathKey(filePath);
-  const openDocument = vscode.workspace.textDocuments.find(document =>
-    document.uri.scheme === 'file' && normalizePathKey(document.uri.fsPath) === key
-  );
+  const openDocument = await findOpenProjectDocument(filePath);
   if (openDocument) {
     return openDocument.getText();
   }
@@ -724,10 +718,7 @@ async function readCachedFile(filePath: string): Promise<CachedText | null> {
 }
 
 async function readConfigAliases(configPath: string): Promise<Set<string>> {
-  const key = normalizePathKey(configPath);
-  const openDocument = vscode.workspace.textDocuments.find(document =>
-    document.uri.scheme === 'file' && normalizePathKey(document.uri.fsPath) === key
-  );
+  const openDocument = await findOpenProjectDocument(configPath);
   if (openDocument) {
     return parseConfigAliases(openDocument.getText());
   }

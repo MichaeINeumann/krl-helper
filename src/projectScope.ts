@@ -56,6 +56,11 @@ export function inferKrlTreeRoot(filePath: string): string | null {
   return null;
 }
 
+/** Uses the inferred controller tree whenever one owns the source, even for nested workspaces. */
+export function projectRootForSource(sourcePath: string, workspaceRoot: string | null): string | null {
+  return inferKrlTreeRoot(sourcePath) ?? workspaceRoot;
+}
+
 /** Number of path segments separating two paths, used to rank candidates by proximity. */
 export function pathDistance(
   leftPath: string,
@@ -127,6 +132,7 @@ export async function scanProjectTree(
       }
       visitedRealPaths.add(realDirectory);
       entries = await fs.promises.readdir(directory, { withFileTypes: true });
+      entries.sort(compareProjectEntries);
     } catch {
       continue;
     }
@@ -186,6 +192,7 @@ export function scanProjectTreeSync(
       }
       visitedRealPaths.add(realDirectory);
       entries = fs.readdirSync(directory, { withFileTypes: true });
+      entries.sort(compareProjectEntries);
     } catch {
       continue;
     }
@@ -221,4 +228,9 @@ export function scanProjectTreeSync(
     }
   }
   return files;
+}
+
+function compareProjectEntries(left: fs.Dirent, right: fs.Dirent): number {
+  return Number(left.isSymbolicLink()) - Number(right.isSymbolicLink())
+    || left.name.localeCompare(right.name);
 }

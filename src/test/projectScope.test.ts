@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { selectNearestPath } from '../projectScope';
+import * as path from 'path';
+import { projectRootForSource, selectNearestPath } from '../projectScope';
 
 suite('KRL project scope', () => {
   test('ranks Windows paths without regard to component casing', () => {
@@ -13,6 +14,16 @@ suite('KRL project scope', () => {
         'win32'
       ),
       nearby
+    );
+  });
+
+  test('prefers the inferred R1 tree when the workspace is nested below it', () => {
+    const projectRoot = path.join(path.sep, 'demo', 'KRC', 'R1');
+    const workspaceRoot = path.join(projectRoot, 'Program');
+
+    assert.strictEqual(
+      projectRootForSource(path.join(workspaceRoot, 'main.src'), workspaceRoot),
+      projectRoot
     );
   });
 });

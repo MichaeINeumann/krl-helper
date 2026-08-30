@@ -1012,22 +1012,35 @@ suite('KRL Helper', () => {
     await vscode.workspace.fs.createDirectory(programUri);
     await vscode.workspace.fs.createDirectory(systemUri);
     await vscode.workspace.fs.writeFile(sourceUri, Buffer.from(
-      'DEF Standalone()\n  bLinkedFile = TRUE\nEND\n'
+      'DEF Standalone()\n  bLinkedFile = TRUE\n  bStillMissing = TRUE\nEND\n'
     ));
     await vscode.workspace.fs.writeFile(globalUri, Buffer.from(
-      'DEFDAT Shared PUBLIC\nGLOBAL BOOL bLinkedFile\nENDDAT\n'
+      'DEFDAT Shared PUBLIC\nENDDAT\n'
     ));
     await fs.promises.symlink(globalUri.fsPath, aliasUri.fsPath, 'file');
 
     try {
+      const aliasDocument = await vscode.workspace.openTextDocument(aliasUri);
+      const aliasEditor = await vscode.window.showTextDocument(aliasDocument);
+      assert.ok(await aliasEditor.edit(edit =>
+        edit.insert(new vscode.Position(1, 0), 'GLOBAL BOOL bLinkedFile\n')
+      ));
+      assert.strictEqual(aliasDocument.isDirty, true);
+
       const document = await vscode.workspace.openTextDocument(sourceUri);
       await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bStillMissing'"))
+      );
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bLinkedFile'")));
       const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
         'vscode.executeDefinitionProvider',
         sourceUri,
         document.positionAt(lastIdentifierOffset(document.getText(), 'bLinkedFile'))
       );
       assert.strictEqual(definitions.length, 1);
+      assert.strictEqual(definitions[0].uri.toString(), aliasUri.toString());
+      assert.ok(await aliasDocument.save());
     } finally {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       await vscode.workspace.fs.delete(projectUri, { recursive: true, useTrash: false });

@@ -16,10 +16,11 @@ import {
   parseKrlVariableDeclarations
 } from './variableParser';
 import { parseKrlFunctions } from './functionParser';
+import { findOpenProjectDocument } from './projectDocuments';
 import {
-  inferKrlTreeRoot,
   isProjectDeclarationFile,
   normalizeProjectPath,
+  projectRootForSource,
   scanProjectTree,
   selectNearestPath
 } from './projectScope';
@@ -138,7 +139,9 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     const currentSourceId = uriKey(document.uri);
     const currentDefinitions = indexDocument(document);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    const projectRoot = inferKrlProjectRoot(document.uri) ?? workspaceFolder?.uri.fsPath;
+    const projectRoot = document.uri.scheme === 'file'
+      ? projectRootForSource(document.uri.fsPath, workspaceFolder?.uri.fsPath ?? null) ?? undefined
+      : workspaceFolder?.uri.fsPath;
     const projectIndex = projectRoot
       ? await this.projectVariables(projectRoot)
       : {
@@ -191,10 +194,8 @@ export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider,
     const definitions: IndexedKrlVariable[] = [];
     const files = await scanProjectFiles(root);
     for (const filePath of files) {
-      const uri = vscode.Uri.file(filePath);
-      const openDocument = vscode.workspace.textDocuments.find(document =>
-        document.uri.scheme === 'file' && normalizePath(document.uri.fsPath) === normalizePath(filePath)
-      );
+      const openDocument = await findOpenProjectDocument(filePath);
+      const uri = openDocument?.uri ?? vscode.Uri.file(filePath);
       let fileText: string;
       try {
         fileText = openDocument?.getText() ?? await fs.promises.readFile(filePath, 'utf8');
@@ -367,13 +368,6 @@ function findKrlRoutines(text: string): KrlRoutineRange[] {
       endOffset: match ? definition.endOffset + match.index + match[0].length : nextDefinitionOffset
     };
   });
-}
-
-function inferKrlProjectRoot(uri: vscode.Uri): string | undefined {
-  if (uri.scheme !== 'file') {
-    return undefined;
-  }
-  return inferKrlTreeRoot(uri.fsPath) ?? undefined;
 }
 
 async function scanProjectFiles(root: string): Promise<string[]> {
