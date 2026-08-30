@@ -2,11 +2,20 @@
 
 ## 0.3.0
 
+### Features
+
+- Export and import both syntax palettes as a JSON file, from the settings editor or the Command Palette
+- Direct hexadecimal color entry with validation and paste support in the KRL Helper settings editor
+
 ### Fixes
 
-- Persist custom dark and light syntax palettes in VS Code user settings so they survive extension updates and participate in Settings Sync
-- Add direct hexadecimal color entry with validation and paste support to the KRL Helper settings editor
+- Persist custom dark and light syntax palettes in VS Code user settings so they survive extension updates, reinstalls, and cleared extension storage, and participate in Settings Sync
 - Keep theme-scoped palette rules synchronized across VS Code theme changes and multiple open windows
+
+### Deprecations
+
+- The per-color `krlHighlighting.colors.*` settings are deprecated. Existing values are migrated once into `krlHighlighting.palettes`; use **KRL Helper: Open Settings** to change syntax colors.
+- `krlHighlighting.applyCustomColors` is now application-scoped. It always controlled a single user-level value, so a per-workspace override was never actually isolated.
 
 ## 0.2.0
 
