@@ -53,8 +53,6 @@ END
 Useful commands are available from the Command Palette:
 
 - **KRL Helper: Open Settings** opens the **Dark Colors**, **Light Colors**, and **Diagnostics** tabs.
-- **KRL Helper: Export Color Palettes...** writes both palettes to a JSON file.
-- **KRL Helper: Import Color Palettes...** loads both palettes from such a file.
 - **KRL Helper: Toggle Line Comment** toggles `;` comments on the selected lines.
 - **KRL Helper: Convert Selection to iiQKA Fold** wraps a selected supported motion block in fold metadata.
 
@@ -69,19 +67,6 @@ For fold conversion, select only the motion block. Existing old `;FOLD` and `;EN
 Both palettes are stored together in the user setting `krlHighlighting.palettes`. Because that is normal VS Code configuration rather than extension state, custom colors survive extension updates, reinstalls, and a cleared extension storage, and they participate in Settings Sync.
 
 Open **KRL Helper: Open Settings** to edit them. Every color accepts `#RGB`, `#RGBA`, `#RRGGBB`, and `#RRGGBBAA`, entered either through the picker or typed directly into the hex field. **Restore Defaults** changes the selected palette draft only; **Apply Colors** then saves both palettes in a single atomic write.
-
-**Export File...** and **Import File...** (also available as commands) read and write a plain JSON backup:
-
-```json
-{
-  "format": "krl-helper.palettes",
-  "version": 1,
-  "dark": { "comments": "#00FF00" },
-  "light": { "comments": "#59636D" }
-}
-```
-
-An imported file only needs the colors it wants to change; omitted colors keep their current value. Unknown color names and malformed hex values are reported instead of being ignored.
 
 Managed rules are written to User Settings and scoped per theme, so dark and light palettes stay available when VS Code windows use different themes. The rules are recomputed from the stored palettes and skipped when nothing would change, which keeps concurrent windows from overwriting each other repeatedly. Palettes from older extension versions are migrated automatically on first start.
 

@@ -4,7 +4,6 @@
 
 ### Features
 
-- Export and import both syntax palettes as a JSON file, from the settings editor or the Command Palette
 - Direct hexadecimal color entry with validation and paste support in the KRL Helper settings editor
 
 ### Fixes

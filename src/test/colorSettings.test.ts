@@ -2,12 +2,13 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   colorSettingsHtml,
+  cleanLegacyWorkspaceHelperRules,
   CompletePalettes,
-  PaletteFileError,
-  parsePaletteFile,
+  legacyUserColors,
+  mergeLegacyPaletteSources,
+  paletteMigrationValue,
   persistPalettes,
   removeAllHelperColors,
-  serializePaletteFile,
   TextMateRule,
   themePaletteTargets,
   themeSelectorForKind,
@@ -219,6 +220,34 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(cleaned, customizations);
   });
 
+  test('cleans current workspace helper rules idempotently without stored migration state', async () => {
+    const configuration = vscode.workspace.getConfiguration('editor');
+    const previousValue = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
+    const foreignRule: TextMateRule = {
+      name: 'Synthetic user rule',
+      scope: 'source.krl',
+      settings: { foreground: '#123456' }
+    };
+
+    try {
+      await configuration.update('tokenColorCustomizations', {
+        textMateRules: [foreignRule, helperRule('Regular text', '#C0C0C0')]
+      }, vscode.ConfigurationTarget.Workspace);
+
+      await cleanLegacyWorkspaceHelperRules();
+      await cleanLegacyWorkspaceHelperRules();
+
+      const cleaned = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
+      assert.deepStrictEqual(cleaned?.textMateRules, [foreignRule]);
+    } finally {
+      await configuration.update(
+        'tokenColorCustomizations',
+        previousValue,
+        vscode.ConfigurationTarget.Workspace
+      );
+    }
+  });
+
   test('reads update-stable palettes from VS Code user configuration', async () => {
     const configuration = vscode.workspace.getConfiguration('krlHighlighting');
     const previousValue = configuration.inspect<CompletePalettes>('palettes')?.globalValue;
@@ -256,36 +285,52 @@ suite('KRL syntax color configuration', () => {
     }
   });
 
-  test('exports and reimports a palette file without changing any color', () => {
-    const palettes = completePalettes('#112233');
-    palettes.light.comments = '#FF0000';
-
-    const parsed = parsePaletteFile(serializePaletteFile(palettes), completePalettes('#000000'));
-
-    assert.deepStrictEqual(parsed, palettes);
-  });
-
-  test('merges a partial palette file onto the current colors', () => {
-    const current = completePalettes('#112233');
-
-    const parsed = parsePaletteFile('{"dark":{"comments":"#abc"}}', current);
-
-    assert.strictEqual(parsed.dark.comments, '#ABC');
-    assert.strictEqual(parsed.dark.normalText, '#112233');
-    assert.deepStrictEqual(parsed.light, current.light);
-  });
-
-  test('rejects malformed palette files instead of dropping colors silently', () => {
-    const current = completePalettes('#112233');
-
-    assert.throws(() => parsePaletteFile('not json', current), PaletteFileError);
-    assert.throws(() => parsePaletteFile('{}', current), /neither a dark nor a light palette/);
-    assert.throws(() => parsePaletteFile('{"dark":{"comments":"00FF00"}}', current), /Invalid color/);
-    assert.throws(() => parsePaletteFile('{"dark":{"commets":"#00FF00"}}', current), /Unknown color/);
-    assert.throws(
-      () => parsePaletteFile('{"format":"other","dark":{}}', current),
-      /Unsupported palette file format/
+  test('migrates legacy palette sources in their released precedence order', () => {
+    const migrated = mergeLegacyPaletteSources(
+      { comments: '#111111', normalText: '#AAAAAA' },
+      { dark: { comments: '#222222' }, light: { comments: '#DDDDDD' } },
+      { dark: { comments: '#333333' }, light: { comments: '#EEEEEE' } }
     );
+
+    assert.strictEqual(migrated.dark.comments, '#333333');
+    assert.strictEqual(migrated.dark.normalText, '#AAAAAA');
+    assert.strictEqual(migrated.light.comments, '#EEEEEE');
+  });
+
+  test('uses the unified palette as a durable migration marker', () => {
+    assert.strictEqual(
+      paletteMigrationValue(
+        {},
+        { comments: '#111111' },
+        { dark: { comments: '#222222' } },
+        {}
+      ),
+      undefined
+    );
+    assert.deepStrictEqual(
+      paletteMigrationValue(
+        undefined,
+        { comments: '#111111' },
+        { dark: { comments: '#222222' } },
+        {}
+      ),
+      { dark: { comments: '#222222' }, light: {} }
+    );
+  });
+
+  test('reads only User values from deprecated per-color settings', async () => {
+    const configuration = vscode.workspace.getConfiguration('krlHighlighting.colors');
+    const inspected = configuration.inspect<string>('comments');
+
+    try {
+      await configuration.update('comments', '#111111', vscode.ConfigurationTarget.Global);
+      await configuration.update('comments', '#222222', vscode.ConfigurationTarget.Workspace);
+
+      assert.strictEqual(legacyUserColors().comments, '#111111');
+    } finally {
+      await configuration.update('comments', inspected?.workspaceValue, vscode.ConfigurationTarget.Workspace);
+      await configuration.update('comments', inspected?.globalValue, vscode.ConfigurationTarget.Global);
+    }
   });
 
   test('keeps distinct user-selected comment colors across dark and light theme synchronization', async () => {
@@ -376,9 +421,15 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(properties['krlHighlighting.palettes'].scope, 'application');
     assert.strictEqual(properties['krlHighlighting.applyCustomColors'].scope, 'application');
     assert.ok(properties['krlHighlighting.colors.comments'].markdownDeprecationMessage);
-    const commands = extension.packageJSON.contributes.commands as Array<{ command: string }>;
-    assert.ok(commands.some(entry => entry.command === 'krlHelper.exportColorSettings'));
-    assert.ok(commands.some(entry => entry.command === 'krlHelper.importColorSettings'));
+    const paletteNamePattern = Object.keys(
+      properties['krlHighlighting.palettes'].properties.dark.patternProperties
+    )[0];
+    assert.ok(new RegExp(paletteNamePattern).test('comments'));
+    assert.ok(!new RegExp(paletteNamePattern).test('comment'));
+    assert.strictEqual(
+      properties['krlHighlighting.palettes'].properties.dark.additionalProperties,
+      false
+    );
 
     const html = colorSettingsHtml({ cspSource: 'test-source' } as vscode.Webview, 'light');
 
@@ -401,10 +452,6 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('setColorControlsDisabled(true)'));
     assert.ok(html.includes("event.data.message || 'Colors applied.'"));
     assert.ok(html.includes('for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;'));
-    assert.ok(html.includes('id="import"'));
-    assert.ok(html.includes('id="export"'));
-    assert.ok(html.includes("vscode.postMessage({ type: 'export' })"));
-    assert.ok(html.includes("vscode.postMessage({ type: 'import' })"));
     assert.ok(html.includes("setStatus('Default colors loaded for the ' + selectedPanel + ' theme. Apply Colors to save.');"));
     assert.ok(!html.includes("vscode.postMessage({ type: 'reset', palette: selectedPanel })"));
     assert.ok(html.includes('data-key="localVariablePrefixes"'));
