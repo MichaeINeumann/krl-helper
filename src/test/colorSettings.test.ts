@@ -1,14 +1,18 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
+  applyPalettePatch,
   colorSettingsHtml,
   cleanLegacyWorkspaceHelperRules,
   CompletePalettes,
   legacyUserColors,
   mergeLegacyPaletteSources,
+  PaletteFileError,
   paletteMigrationValue,
+  parsePaletteFile,
   persistPalettes,
   removeAllHelperColors,
+  serializePaletteFile,
   TextMateRule,
   themePaletteTargets,
   themeSelectorForKind,
@@ -333,6 +337,48 @@ suite('KRL syntax color configuration', () => {
     }
   });
 
+  test('exports and reimports a complete palette backup', () => {
+    const palettes = completePalettes('#112233');
+    palettes.light.comments = '#FF0000';
+
+    const patch = parsePaletteFile(serializePaletteFile(palettes));
+    const imported = applyPalettePatch(completePalettes('#000000'), patch);
+
+    assert.deepStrictEqual(imported, palettes);
+  });
+
+  test('accepts a UTF-8 BOM-prefixed palette backup', () => {
+    const patch = parsePaletteFile('\uFEFF{"dark":{"comments":"#abc"}}');
+
+    assert.deepStrictEqual(patch, { dark: { comments: '#ABC' } });
+  });
+
+  test('merges omitted colors from the latest palette state', () => {
+    const patch = parsePaletteFile('{"dark":{"comments":"#ABCDEF"}}');
+    const stateWhenFileWasRead = completePalettes('#111111');
+    const stateWhenWriteRuns = completePalettes('#222222');
+
+    const staleMerge = applyPalettePatch(stateWhenFileWasRead, patch);
+    const queuedMerge = applyPalettePatch(stateWhenWriteRuns, patch);
+
+    assert.strictEqual(staleMerge.dark.normalText, '#111111');
+    assert.strictEqual(queuedMerge.dark.normalText, '#222222');
+    assert.strictEqual(queuedMerge.dark.comments, '#ABCDEF');
+    assert.strictEqual(queuedMerge.light.comments, '#222222');
+  });
+
+  test('rejects malformed or ambiguous palette backups', () => {
+    assert.throws(() => parsePaletteFile('not json'), PaletteFileError);
+    assert.throws(() => parsePaletteFile('{}'), /neither a dark nor a light palette/);
+    assert.throws(() => parsePaletteFile('{"dark":{"comments":"00FF00"}}'), /Invalid color/);
+    assert.throws(() => parsePaletteFile('{"dark":{"commets":"#00FF00"}}'), /Unknown color/);
+    assert.throws(() => parsePaletteFile('{"dark":{},"extra":true}'), /Unknown top-level property/);
+    assert.throws(
+      () => parsePaletteFile('{"format":"other","dark":{}}'),
+      /Unsupported palette file format/
+    );
+  });
+
   test('keeps distinct user-selected comment colors across dark and light theme synchronization', async () => {
     const configuration = vscode.workspace.getConfiguration('krlHighlighting');
     const previousValue = configuration.inspect<CompletePalettes>('palettes')?.globalValue;
@@ -430,6 +476,9 @@ suite('KRL syntax color configuration', () => {
       properties['krlHighlighting.palettes'].properties.dark.additionalProperties,
       false
     );
+    const commands = extension.packageJSON.contributes.commands as Array<{ command: string }>;
+    assert.ok(commands.some(entry => entry.command === 'krlHelper.exportColorSettings'));
+    assert.ok(commands.some(entry => entry.command === 'krlHelper.importColorSettings'));
 
     const html = colorSettingsHtml({ cspSource: 'test-source' } as vscode.Webview, 'light');
 
@@ -452,6 +501,12 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('setColorControlsDisabled(true)'));
     assert.ok(html.includes("event.data.message || 'Colors applied.'"));
     assert.ok(html.includes('for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;'));
+    assert.ok(html.includes('id="import"'));
+    assert.ok(html.includes('id="export"'));
+    assert.ok(html.includes("vscode.postMessage({ type: 'export' })"));
+    assert.ok(html.includes("vscode.postMessage({ type: 'import' })"));
+    assert.ok(html.includes("event.data.type === 'fileOperationResult'"));
+    assert.ok(html.includes('setColorControlsDisabled(false)'));
     assert.ok(html.includes("setStatus('Default colors loaded for the ' + selectedPanel + ' theme. Apply Colors to save.');"));
     assert.ok(!html.includes("vscode.postMessage({ type: 'reset', palette: selectedPanel })"));
     assert.ok(html.includes('data-key="localVariablePrefixes"'));

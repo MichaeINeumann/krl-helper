@@ -2,7 +2,7 @@
   "name": "krl-helper",
   "displayName": "KRL Helper",
   "description": "Language support and productivity tools for KUKA Robot Language (KRL) in Visual Studio Code.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "MichaeINeumann",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -45,6 +45,8 @@
     "onLanguage:krl",
     "onCommand:kukaFoldTools.convertSelection",
     "onCommand:krlHelper.openColorSettings",
+    "onCommand:krlHelper.exportColorSettings",
+    "onCommand:krlHelper.importColorSettings",
     "onCommand:krlHelper.toggleLineComment"
   ],
   "main": "./dist/extension.js",
@@ -61,6 +63,14 @@
       {
         "command": "krlHelper.toggleLineComment",
         "title": "KRL Helper: Toggle Line Comment"
+      },
+      {
+        "command": "krlHelper.exportColorSettings",
+        "title": "KRL Helper: Export Color Palettes..."
+      },
+      {
+        "command": "krlHelper.importColorSettings",
+        "title": "KRL Helper: Import Color Palettes..."
       }
     ],
     "keybindings": [

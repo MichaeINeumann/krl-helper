@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+### Features
+
+- Export both saved syntax palettes to a versioned JSON backup from the settings editor or Command Palette
+- Import complete or partial palette backups while preserving colors omitted by the file
+
+### Fixes
+
+- Accept UTF-8 BOM-prefixed JSON files and report unknown properties or malformed colors clearly
+- Merge partial imports with the latest locally queued palette state and clear the settings status after a canceled file dialog
+
 ## 0.3.0
 
 ### Features

@@ -1,3 +1,4 @@
+import * as os from 'os';
 import * as vscode from 'vscode';
 import {
   DiagnosticSettingKey,
@@ -8,6 +9,8 @@ import {
 const rulePrefix = 'KRL Helper: ';
 const storageKey = 'krlHelper.syntaxColors';
 const colorPattern = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const paletteFileFormat = 'krl-helper.palettes';
+const paletteFileVersion = 1;
 
 type TextMateScope = string | readonly string[];
 
@@ -70,6 +73,11 @@ export interface CompletePalettes {
   light: Record<string, string>;
 }
 
+export interface PalettePatch {
+  dark?: Record<string, string>;
+  light?: Record<string, string>;
+}
+
 export interface ThemeSelectionConfiguration {
   colorTheme: string;
   preferredDarkColorTheme: string;
@@ -90,6 +98,8 @@ interface PaletteConfiguration {
 }
 
 class PalettePersistenceError extends Error {}
+
+export class PaletteFileError extends Error {}
 
 function activePalette(): PaletteName {
   const kind = vscode.window.activeColorTheme.kind;
@@ -287,6 +297,76 @@ export function validateSubmittedPalettes(value: unknown): CompletePalettes | un
     }
   }
   return normalized;
+}
+
+export function serializePaletteFile(palettes: CompletePalettes): string {
+  return `${JSON.stringify({
+    format: paletteFileFormat,
+    version: paletteFileVersion,
+    dark: palettes.dark,
+    light: palettes.light
+  }, null, 2)}\n`;
+}
+
+export function parsePaletteFile(content: string): PalettePatch {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content.replace(/^\uFEFF/, ''));
+  } catch {
+    throw new PaletteFileError('The palette file is not valid JSON.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new PaletteFileError('The palette file must contain a JSON object.');
+  }
+
+  const file = parsed as Record<string, unknown>;
+  const supportedTopLevelKeys = new Set(['format', 'version', 'dark', 'light']);
+  const unknownTopLevelKey = Object.keys(file).find(key => !supportedTopLevelKeys.has(key));
+  if (unknownTopLevelKey) {
+    throw new PaletteFileError(`Unknown top-level property '${unknownTopLevelKey}' in the palette file.`);
+  }
+  if (file.format !== undefined && file.format !== paletteFileFormat) {
+    throw new PaletteFileError(`Unsupported palette file format '${String(file.format)}'.`);
+  }
+  if (file.version !== undefined && file.version !== paletteFileVersion) {
+    throw new PaletteFileError(`Unsupported palette file version '${String(file.version)}'.`);
+  }
+  if (file.dark === undefined && file.light === undefined) {
+    throw new PaletteFileError('The palette file contains neither a dark nor a light palette.');
+  }
+
+  const knownColorKeys = new Set(colorDefinitions.map(definition => definition.key));
+  const patch: PalettePatch = {};
+  for (const palette of ['dark', 'light'] as const) {
+    const paletteValue = file[palette];
+    if (paletteValue === undefined) {
+      continue;
+    }
+    if (!paletteValue || typeof paletteValue !== 'object' || Array.isArray(paletteValue)) {
+      throw new PaletteFileError(`The '${palette}' palette must be a JSON object.`);
+    }
+    const colors: Record<string, string> = {};
+    for (const [key, value] of Object.entries(paletteValue as Record<string, unknown>)) {
+      if (!knownColorKeys.has(key)) {
+        throw new PaletteFileError(`Unknown color '${palette}.${key}' in the palette file.`);
+      }
+      if (typeof value !== 'string' || !colorPattern.test(value.trim())) {
+        throw new PaletteFileError(
+          `Invalid color for '${palette}.${key}'. Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.`
+        );
+      }
+      colors[key] = value.trim().toUpperCase();
+    }
+    patch[palette] = colors;
+  }
+  return patch;
+}
+
+export function applyPalettePatch(current: CompletePalettes, patch: PalettePatch): CompletePalettes {
+  return {
+    dark: { ...current.dark, ...(patch.dark ?? {}) },
+    light: { ...current.light, ...(patch.light ?? {}) }
+  };
 }
 
 export async function persistPalettes(
@@ -791,7 +871,7 @@ export function colorSettingsHtml(
   </div>
   ${palettes}
   <section id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden><h2>Diagnostics</h2><p>Enter one literal prefix per line. Values are trimmed and duplicates are removed case-insensitively.</p>${diagnosticCards}</section>
-  <div id="color-actions" class="actions"><button type="button" id="reset" class="secondary">Restore Defaults</button><button type="button" id="save">Apply Colors</button></div>
+  <div id="color-actions" class="actions"><button type="button" id="import" class="secondary">Import File...</button><button type="button" id="export" class="secondary">Export File...</button><button type="button" id="reset" class="secondary">Restore Defaults</button><button type="button" id="save">Apply Colors</button></div>
   <div id="status" role="status"></div>
   <script nonce="${scriptNonce}">
     const vscode = acquireVsCodeApi();
@@ -841,7 +921,7 @@ export function colorSettingsHtml(
     function setColorControlsDisabled(disabled) {
       colorSavePending = disabled;
       for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;
-      for (const id of ['save', 'reset']) document.getElementById(id).disabled = disabled;
+      for (const id of ['save', 'reset', 'import', 'export']) document.getElementById(id).disabled = disabled;
     }
 
     function renderPaletteColors(colors) {
@@ -957,6 +1037,18 @@ export function colorSettingsHtml(
       setStatus('Applying colors...');
       vscode.postMessage({ type: 'save', colors });
     });
+    document.getElementById('export').addEventListener('click', () => {
+      if (colorSavePending) return;
+      setColorControlsDisabled(true);
+      setStatus('Choose where to export the saved palettes...');
+      vscode.postMessage({ type: 'export' });
+    });
+    document.getElementById('import').addEventListener('click', () => {
+      if (colorSavePending) return;
+      setColorControlsDisabled(true);
+      setStatus('Choose a palette file to import...');
+      vscode.postMessage({ type: 'import' });
+    });
     document.getElementById('reset').addEventListener('click', () => {
       if (colorSavePending || !paletteNames.includes(selectedPanel)) return;
       for (const input of colorInputs.filter(candidate => candidate.dataset.palette === selectedPanel)) {
@@ -975,6 +1067,13 @@ export function colorSettingsHtml(
       } else if (event.data && event.data.type === 'saveError') {
         setColorControlsDisabled(false);
         setStatus(event.data.message || 'The palettes contain an invalid hexadecimal color.', true);
+      } else if (event.data && event.data.type === 'fileOperationResult') {
+        const preservedDirtyFields = renderPaletteColors(event.data.colors);
+        setColorControlsDisabled(false);
+        const message = event.data.message || 'Palette file operation finished.';
+        setStatus(preservedDirtyFields > 0
+          ? message + ' Unsaved color edits were preserved.'
+          : message, event.data.error === true);
       } else if (event.data && event.data.type === 'palettesState') {
         const preservedDirtyFields = renderPaletteColors(event.data.colors);
         const message = event.data.message || 'Palettes refreshed from User Settings.';
@@ -990,6 +1089,126 @@ export function colorSettingsHtml(
   </script>
 </body>
 </html>`;
+}
+
+async function reportPaletteFileStatus(
+  message: string,
+  error = false,
+  showNotification = true
+): Promise<void> {
+  if (showNotification) {
+    if (error) {
+      void vscode.window.showErrorMessage(`KRL Helper: ${message}`);
+    } else {
+      void vscode.window.showInformationMessage(`KRL Helper: ${message}`);
+    }
+  }
+  await colorPanel?.webview.postMessage({
+    type: 'fileOperationResult',
+    colors: paletteSettingsView(),
+    message,
+    error
+  });
+}
+
+export async function exportPalettes(): Promise<void> {
+  const homeDirectory = os.homedir().trim();
+  let target: vscode.Uri | undefined;
+  try {
+    target = await vscode.window.showSaveDialog({
+      title: 'Export KRL Helper Palettes',
+      saveLabel: 'Export',
+      filters: { 'KRL Helper palettes': ['json'] },
+      defaultUri: homeDirectory
+        ? vscode.Uri.joinPath(vscode.Uri.file(homeDirectory), 'krl-helper-palettes.json')
+        : undefined
+    });
+  } catch (error) {
+    await reportPaletteFileStatus(
+      `The export dialog could not be opened. ${error instanceof Error ? error.message : String(error)}`,
+      true
+    );
+    return;
+  }
+  if (!target) {
+    await reportPaletteFileStatus('Palette export cancelled.', false, false);
+    return;
+  }
+
+  try {
+    await vscode.workspace.fs.writeFile(
+      target,
+      Buffer.from(serializePaletteFile(paletteSettingsView()), 'utf8')
+    );
+  } catch (error) {
+    await reportPaletteFileStatus(
+      `The palettes could not be exported. ${error instanceof Error ? error.message : String(error)}`,
+      true
+    );
+    return;
+  }
+  await reportPaletteFileStatus(`Palettes exported to ${target.fsPath}.`);
+}
+
+export async function importPalettes(): Promise<void> {
+  let selection: readonly vscode.Uri[] | undefined;
+  try {
+    selection = await vscode.window.showOpenDialog({
+      title: 'Import KRL Helper Palettes',
+      openLabel: 'Import',
+      canSelectMany: false,
+      filters: { 'KRL Helper palettes': ['json'] }
+    });
+  } catch (error) {
+    await reportPaletteFileStatus(
+      `The import dialog could not be opened. ${error instanceof Error ? error.message : String(error)}`,
+      true
+    );
+    return;
+  }
+  const source = selection?.[0];
+  if (!source) {
+    await reportPaletteFileStatus('Palette import cancelled.', false, false);
+    return;
+  }
+
+  let patch: PalettePatch;
+  try {
+    const content = await vscode.workspace.fs.readFile(source);
+    patch = parsePaletteFile(Buffer.from(content).toString('utf8'));
+  } catch (error) {
+    await reportPaletteFileStatus(
+      error instanceof PaletteFileError
+        ? error.message
+        : `The palette file could not be read. ${error instanceof Error ? error.message : String(error)}`,
+      true
+    );
+    return;
+  }
+
+  let paletteWriteCompleted = false;
+  try {
+    await queueColorUpdate(async () => {
+      const current = paletteSettingsView();
+      const imported = applyPalettePatch(current, patch);
+      if (!valuesEqual(current, imported)) {
+        await persistPalettes(imported);
+      }
+      paletteWriteCompleted = true;
+      await synchronizeTokenColors();
+    });
+  } catch (error) {
+    await reportPaletteFileStatus(
+      error instanceof PalettePersistenceError
+        ? error.message
+        : paletteWriteCompleted
+          ? 'The palettes were imported, but the syntax colors could not be applied. Reload VS Code.'
+          : 'The palettes could not be imported.',
+      true
+    );
+    return;
+  }
+  await reportPaletteFileStatus(`Palettes imported from ${source.fsPath}.`);
 }
 
 export async function openColorSettings(context: vscode.ExtensionContext): Promise<void> {
@@ -1035,6 +1254,10 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
         return;
       }
       await colorPanel?.webview.postMessage({ type: 'saved' });
+    } else if (message?.type === 'export') {
+      await exportPalettes();
+    } else if (message?.type === 'import') {
+      await importPalettes();
     } else if (message?.type === 'diagnosticUpdate' || message?.type === 'diagnosticReset') {
       const definition = diagnosticSettingDefinitions.find(candidate => candidate.key === message.key);
       const scope = message.scope === 'workspace' ? 'workspace' : message.scope === 'user' ? 'user' : undefined;
@@ -1060,6 +1283,8 @@ export function initializeColorSettings(context: vscode.ExtensionContext): void 
   extensionContext = context;
   context.subscriptions.push(
     vscode.commands.registerCommand('krlHelper.openColorSettings', () => openColorSettings(context)),
+    vscode.commands.registerCommand('krlHelper.exportColorSettings', () => exportPalettes()),
+    vscode.commands.registerCommand('krlHelper.importColorSettings', () => importPalettes()),
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('krlHighlighting')
         || event.affectsConfiguration('editor.tokenColorCustomizations')
