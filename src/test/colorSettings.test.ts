@@ -2,8 +2,10 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   colorSettingsHtml,
+  cleanLegacyWorkspaceHelperRules,
   CompletePalettes,
   legacyUserColors,
+  managedThemeSelector,
   mergeLegacyPaletteSources,
   paletteMigrationValue,
   persistPalettes,
@@ -13,10 +15,8 @@ import {
   themePaletteTargets,
   themeSelectorForKind,
   TokenColorCustomizations,
-  synchronizeWorkspaceHelperRules,
   updateCustomizationTargets,
   updateCustomizationValue,
-  updateWorkspaceCustomizationTargets,
   validateSubmittedPalettes
 } from '../colorSettings';
 
@@ -124,19 +124,34 @@ suite('KRL syntax color configuration', () => {
 
   test('converges concurrent windows while preserving their distinct theme selectors', () => {
     const firstWindowTargets = [
-      { selector: '[First Dark Theme]', palette: 'dark' as const },
-      { selector: '[Shared Light Theme]', palette: 'light' as const }
+      { selector: managedThemeSelector('[First Dark Theme]'), palette: 'dark' as const },
+      { selector: managedThemeSelector('[Shared Light Theme]'), palette: 'light' as const }
     ];
     const secondWindowTargets = [
-      { selector: '[Second Dark Theme]', palette: 'dark' as const },
-      { selector: '[Shared Light Theme]', palette: 'light' as const }
+      { selector: managedThemeSelector('[Second Dark Theme]'), palette: 'dark' as const },
+      { selector: managedThemeSelector('[Shared Light Theme]'), palette: 'light' as const }
     ];
     const staleSecondWrite = updateCustomizationTargets({}, true, secondWindowTargets);
     const reconciled = updateCustomizationTargets(staleSecondWrite, true, firstWindowTargets);
 
-    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme]').length, 19);
-    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme][First Dark Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme][Second Dark Theme]').length, 19);
     assert.deepStrictEqual(updateCustomizationTargets(reconciled, true, secondWindowTargets), reconciled);
+  });
+
+  test('migrates exact theme rules while preserving other managed theme palettes', () => {
+    const customizations: TokenColorCustomizations = {
+      '[Dark Test Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] },
+      '[Other Theme][Other Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] }
+    };
+
+    const updated = updateCustomizationTargets(customizations, true, [
+      { selector: managedThemeSelector('[Dark Test Theme]'), palette: 'dark' }
+    ]);
+
+    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme]').length, 0);
+    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme][Dark Test Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(updated, '[Other Theme][Other Theme]').length, 1);
   });
 
   test('falls back to unscoped rules when no theme name can be resolved', () => {
@@ -222,12 +237,9 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(cleaned, customizations);
   });
 
-  test('keeps helper rules effective beneath an existing workspace theme override', async () => {
+  test('cleans legacy workspace helper rules idempotently', async () => {
     const configuration = vscode.workspace.getConfiguration('editor');
     const previousValue = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
-    const themeName = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme', '').trim();
-    assert.ok(themeName);
-    const themeSelector = `[${themeName}]`;
     const foreignRule: TextMateRule = {
       name: 'Synthetic user rule',
       scope: 'source.krl',
@@ -237,19 +249,18 @@ suite('KRL syntax color configuration', () => {
     try {
       await configuration.update('tokenColorCustomizations', {
         textMateRules: [helperRule('Comments', '#00FF00')],
-        [themeSelector]: { textMateRules: [foreignRule] },
+        '[Test Theme]': { textMateRules: [foreignRule, helperRule('Comments', '#00FF00')] },
         '[Unused Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] }
       }, vscode.ConfigurationTarget.Workspace);
 
-      const targets = [{ selector: themeSelector, palette: 'dark' as const }];
-      await synchronizeWorkspaceHelperRules(true, targets);
-      await synchronizeWorkspaceHelperRules(true, targets);
+      await cleanLegacyWorkspaceHelperRules();
+      await cleanLegacyWorkspaceHelperRules();
 
-      const synchronized = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
-      assert.deepStrictEqual(synchronized?.textMateRules, []);
-      assert.ok(rulesAt(synchronized ?? {}, themeSelector).some(rule => rule.name === foreignRule.name));
-      assert.strictEqual(helperRulesAt(synchronized ?? {}, themeSelector).length, 19);
-      assert.strictEqual(helperRulesAt(synchronized ?? {}, '[Unused Theme]').length, 0);
+      const cleaned = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
+      assert.deepStrictEqual(cleaned?.textMateRules, []);
+      assert.ok(rulesAt(cleaned ?? {}, '[Test Theme]').some(rule => rule.name === foreignRule.name));
+      assert.strictEqual(helperRulesAt(cleaned ?? {}, '[Test Theme]').length, 0);
+      assert.strictEqual(helperRulesAt(cleaned ?? {}, '[Unused Theme]').length, 0);
     } finally {
       await configuration.update(
         'tokenColorCustomizations',
@@ -259,22 +270,26 @@ suite('KRL syntax color configuration', () => {
     }
   });
 
-  test('does not create workspace theme overrides that the user did not configure', () => {
+  test('keeps managed user rules distinct from exact workspace and folder overrides', () => {
     const foreignRule: TextMateRule = {
       name: 'Synthetic user rule',
       scope: 'source.krl',
       settings: { foreground: '#123456' }
     };
-    const current: TokenColorCustomizations = {
-      '[Different Theme]': { textMateRules: [foreignRule] }
+    const exactSelector = '[Dark Test Theme]';
+    const userSelector = managedThemeSelector(exactSelector);
+    const userValue = updateCustomizationTargets({}, true, [
+      { selector: userSelector, palette: 'dark' }
+    ]);
+    const sharedOverride: TokenColorCustomizations = {
+      [exactSelector]: { textMateRules: [foreignRule] }
     };
 
-    const updated = updateWorkspaceCustomizationTargets(current, true, [
-      { selector: '[Dark Test Theme]', palette: 'dark' }
-    ]);
+    const effectiveValue = { ...userValue, ...sharedOverride };
 
-    assert.strictEqual(updated, current);
-    assert.strictEqual(updated['[Dark Test Theme]'], undefined);
+    assert.strictEqual(userSelector, '[Dark Test Theme][Dark Test Theme]');
+    assert.strictEqual(helperRulesAt(effectiveValue, userSelector).length, 19);
+    assert.deepStrictEqual(rulesAt(effectiveValue, exactSelector), [foreignRule]);
   });
 
   test('reads update-stable palettes from VS Code user configuration', async () => {
