@@ -27,7 +27,7 @@ For development or testing, build a VSIX and install it from the command line:
 npm ci
 npm run package
 npx @vscode/vsce package
-code --install-extension krl-helper-0.2.0.vsix
+code --install-extension krl-helper-0.3.0.vsix
 ```
 
 You can also use **Extensions: Install from VSIX...** from the Command Palette.
@@ -60,9 +60,19 @@ For fold conversion, select only the motion block. Existing old `;FOLD` and `;EN
 
 ## Configuration
 
-`krlHighlighting.applyCustomColors` enables or disables extension-managed KRL TextMate colors. It defaults to `true` and preserves unrelated TextMate rules.
+`krlHighlighting.applyCustomColors` enables or disables extension-managed KRL TextMate colors. It defaults to `true`, applies to all windows, and preserves unrelated TextMate rules.
 
-The following settings accept CSS-style hexadecimal colors such as `#C0C0C0` or `#001080`:
+### Syntax colors
+
+Both palettes are stored together in the user setting `krlHighlighting.palettes`. Because that is normal VS Code configuration rather than extension state, custom colors survive extension updates, reinstalls, and a cleared extension storage, and they participate in Settings Sync.
+
+Open **KRL Helper: Open Settings** to edit them. Every color accepts `#RGB`, `#RGBA`, `#RRGGBB`, and `#RRGGBBAA`, entered either through the picker or typed directly into the hex field. **Restore Defaults** changes the selected palette draft only; **Apply Colors** then saves both palettes in a single atomic write.
+
+Managed rules are written only to User Settings and scoped with a distinct repeated exact-theme selector, so dark and light palettes stay available when VS Code windows use different themes. Existing single exact-theme overrides in Workspace and Workspace Folder settings coexist with those selectors and keep all unrelated rules; KRL Helper does not write profile-specific palettes into shared workspace files. The rules are recomputed from the stored palettes and skipped when nothing would change, which keeps concurrent windows and profiles from overwriting each other repeatedly. Palettes and extension-owned workspace rules from older extension versions are migrated automatically on first start.
+
+#### Deprecated per-color settings
+
+The following settings are deprecated. Their values are migrated once into `krlHighlighting.palettes` and are no longer read afterwards; use the settings editor instead.
 
 | Setting | Token category |
 | --- | --- |
@@ -85,8 +95,6 @@ The following settings accept CSS-style hexadecimal colors such as `#C0C0C0` or 
 | `krlHighlighting.colors.typeDefinitions` | KRL data types |
 | `krlHighlighting.colors.systemVariables` | `$`-prefixed system variables |
 | `krlHighlighting.colors.listFunctions` | Boolean and enum values plus string/list functions |
-
-The color editor stores separate light and dark palettes and switches them with the active VS Code theme.
 
 ### Diagnostics
 

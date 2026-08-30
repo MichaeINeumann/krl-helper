@@ -2,16 +2,73 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   colorSettingsHtml,
+  cleanLegacyWorkspaceHelperRules,
+  CompletePalettes,
+  legacyUserColors,
+  managedThemeSelector,
+  mergeLegacyPaletteSources,
+  paletteMigrationValue,
+  persistPalettes,
+  postMessageToCurrentPanel,
   removeAllHelperColors,
   TextMateRule,
+  themePaletteTargets,
+  themeSelectorForKind,
   TokenColorCustomizations,
-  updateCustomizationValue
+  updateCustomizationTargets,
+  updateCustomizationValue,
+  validateSubmittedPalettes
 } from '../colorSettings';
 
 const helperPrefix = 'KRL Helper: ';
 
 suite('KRL syntax color configuration', () => {
-  test('replaces stale helper colors with the selected light palette', () => {
+  test('selects the effective automatic light, dark, and high-contrast themes', () => {
+    const configuration = {
+      colorTheme: 'Static Theme',
+      preferredDarkColorTheme: 'Automatic Dark',
+      preferredLightColorTheme: 'Automatic Light',
+      preferredHighContrastColorTheme: 'Automatic High Contrast',
+      preferredHighContrastLightColorTheme: 'Automatic High Contrast Light',
+      autoDetectColorScheme: true,
+      autoDetectHighContrast: true
+    };
+
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.Light, configuration),
+      '[Automatic Light]'
+    );
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.Dark, configuration),
+      '[Automatic Dark]'
+    );
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.HighContrastLight, configuration),
+      '[Automatic High Contrast Light]'
+    );
+    assert.strictEqual(
+      themeSelectorForKind(vscode.ColorThemeKind.Dark, {
+        ...configuration,
+        autoDetectColorScheme: false,
+        autoDetectHighContrast: false
+      }),
+      '[Static Theme]'
+    );
+
+    const targets = themePaletteTargets(configuration, {
+      'Static Theme': 'dark',
+      'Automatic Dark': 'dark',
+      'Automatic Light': 'light',
+      'Automatic High Contrast': 'dark',
+      'Automatic High Contrast Light': 'light'
+    }, '[Automatic High Contrast]', 'dark');
+    assert.ok(targets.some(target => target.selector === '[Static Theme]' && target.palette === 'dark'));
+    assert.ok(targets.some(target =>
+      target.selector === '[Automatic High Contrast]' && target.palette === 'dark'
+    ));
+  });
+
+  test('replaces active helper colors while preserving a different single-theme palette', () => {
     const foreignGeneralRule: TextMateRule = {
       scope: 'source.krl keyword.control.if.krl',
       settings: { foreground: '#123456' }
@@ -29,9 +86,9 @@ suite('KRL syntax color configuration', () => {
 
     const updated = updateCustomizationValue(customizations, true, '[Light Test Theme]', 'light');
 
-    assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), undefined);
     assert.strictEqual(helperForeground(updated, '[Light Test Theme]', 'Regular text'), '#000000');
-    assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), undefined);
+    assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
     assert.strictEqual(helperForeground(updated, '[Dark Test Theme][Light Test Theme]', 'Regular text'), undefined);
     assert.ok(rulesAt(updated).includes(foreignGeneralRule));
     assert.ok(rulesAt(updated, '[Light Test Theme]').includes(foreignThemeRule));
@@ -42,14 +99,78 @@ suite('KRL syntax color configuration', () => {
     const dark = updateCustomizationValue(light, true, '[Dark Test Theme]', 'dark');
     const lightAgain = updateCustomizationValue(dark, true, '[Light Test Theme]', 'light');
 
-    assert.strictEqual(helperForeground(dark, undefined, 'Regular text'), '#C0C0C0');
+    assert.strictEqual(helperForeground(dark, undefined, 'Regular text'), undefined);
     assert.strictEqual(helperForeground(dark, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
-    assert.strictEqual(helperForeground(dark, '[Light Test Theme]', 'Regular text'), undefined);
-    assert.strictEqual(helperForeground(lightAgain, undefined, 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(dark, '[Light Test Theme]', 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(lightAgain, undefined, 'Regular text'), undefined);
     assert.strictEqual(helperForeground(lightAgain, '[Light Test Theme]', 'Regular text'), '#000000');
-    assert.strictEqual(helperForeground(lightAgain, '[Dark Test Theme]', 'Regular text'), undefined);
-    assert.strictEqual(helperRulesAt(lightAgain).length, 19);
+    assert.strictEqual(helperForeground(lightAgain, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
+    assert.strictEqual(helperRulesAt(lightAgain).length, 0);
     assert.strictEqual(helperRulesAt(lightAgain, '[Light Test Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(lightAgain, '[Dark Test Theme]').length, 19);
+  });
+
+  test('builds one deterministic customization containing all configured theme palettes', () => {
+    const targets = [
+      { selector: '[Dark Test Theme]', palette: 'dark' as const },
+      { selector: '[Light Test Theme]', palette: 'light' as const }
+    ];
+    const updated = updateCustomizationTargets({}, true, targets);
+
+    assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
+    assert.strictEqual(helperForeground(updated, '[Light Test Theme]', 'Regular text'), '#000000');
+    assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), undefined);
+  });
+
+  test('converges concurrent windows while preserving their distinct theme selectors', () => {
+    const firstWindowTargets = [
+      { selector: managedThemeSelector('[First Dark Theme]'), palette: 'dark' as const },
+      { selector: managedThemeSelector('[Shared Light Theme]'), palette: 'light' as const }
+    ];
+    const secondWindowTargets = [
+      { selector: managedThemeSelector('[Second Dark Theme]'), palette: 'dark' as const },
+      { selector: managedThemeSelector('[Shared Light Theme]'), palette: 'light' as const }
+    ];
+    const staleSecondWrite = updateCustomizationTargets({}, true, secondWindowTargets);
+    const reconciled = updateCustomizationTargets(staleSecondWrite, true, firstWindowTargets);
+
+    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme][First Dark Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme][Second Dark Theme]').length, 19);
+    assert.deepStrictEqual(updateCustomizationTargets(reconciled, true, secondWindowTargets), reconciled);
+  });
+
+  test('migrates exact theme rules while preserving other managed theme palettes', () => {
+    const customizations: TokenColorCustomizations = {
+      '[Dark Test Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] },
+      '[Other Theme][Other Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] }
+    };
+
+    const updated = updateCustomizationTargets(customizations, true, [
+      { selector: managedThemeSelector('[Dark Test Theme]'), palette: 'dark' }
+    ]);
+
+    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme]').length, 0);
+    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme][Dark Test Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(updated, '[Other Theme][Other Theme]').length, 1);
+  });
+
+  test('falls back to unscoped rules when no theme name can be resolved', () => {
+    const emptyConfiguration = {
+      colorTheme: '',
+      preferredDarkColorTheme: '',
+      preferredLightColorTheme: '',
+      preferredHighContrastColorTheme: '',
+      preferredHighContrastLightColorTheme: '',
+      autoDetectColorScheme: false,
+      autoDetectHighContrast: false
+    };
+
+    assert.deepStrictEqual(themePaletteTargets(emptyConfiguration, {}, '', 'dark'), []);
+
+    const updated = updateCustomizationTargets({}, true, [{ selector: '', palette: 'dark' }]);
+
+    assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), '#C0C0C0');
+    assert.strictEqual(helperRulesAt(updated).length, 19);
   });
 
   test('synchronizing the same theme repeatedly is idempotent', () => {
@@ -116,7 +237,278 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(cleaned, customizations);
   });
 
+  test('cleans legacy workspace helper rules idempotently', async () => {
+    const configuration = vscode.workspace.getConfiguration('editor');
+    const previousValue = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
+    const foreignRule: TextMateRule = {
+      name: 'Synthetic user rule',
+      scope: 'source.krl',
+      settings: { foreground: '#123456' }
+    };
+
+    try {
+      await configuration.update('tokenColorCustomizations', {
+        textMateRules: [helperRule('Comments', '#00FF00')],
+        '[Test Theme]': { textMateRules: [foreignRule, helperRule('Comments', '#00FF00')] },
+        '[Unused Theme]': { textMateRules: [helperRule('Regular text', '#C0C0C0')] }
+      }, vscode.ConfigurationTarget.Workspace);
+
+      await cleanLegacyWorkspaceHelperRules();
+      await cleanLegacyWorkspaceHelperRules();
+
+      const cleaned = configuration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue;
+      assert.deepStrictEqual(cleaned?.textMateRules, []);
+      assert.ok(rulesAt(cleaned ?? {}, '[Test Theme]').some(rule => rule.name === foreignRule.name));
+      assert.strictEqual(helperRulesAt(cleaned ?? {}, '[Test Theme]').length, 0);
+      assert.strictEqual(helperRulesAt(cleaned ?? {}, '[Unused Theme]').length, 0);
+    } finally {
+      await configuration.update(
+        'tokenColorCustomizations',
+        previousValue,
+        vscode.ConfigurationTarget.Workspace
+      );
+    }
+  });
+
+  test('keeps managed user rules distinct from exact workspace and folder overrides', () => {
+    const foreignRule: TextMateRule = {
+      name: 'Synthetic user rule',
+      scope: 'source.krl',
+      settings: { foreground: '#123456' }
+    };
+    const exactSelector = '[Dark Test Theme]';
+    const userSelector = managedThemeSelector(exactSelector);
+    const userValue = updateCustomizationTargets({}, true, [
+      { selector: userSelector, palette: 'dark' }
+    ]);
+    const sharedOverride: TokenColorCustomizations = {
+      [exactSelector]: { textMateRules: [foreignRule] }
+    };
+
+    const effectiveValue = { ...userValue, ...sharedOverride };
+
+    assert.strictEqual(userSelector, '[Dark Test Theme][Dark Test Theme]');
+    assert.strictEqual(helperRulesAt(effectiveValue, userSelector).length, 19);
+    assert.deepStrictEqual(rulesAt(effectiveValue, exactSelector), [foreignRule]);
+  });
+
+  test('reads update-stable palettes from VS Code user configuration', async () => {
+    const configuration = vscode.workspace.getConfiguration('krlHighlighting');
+    const previousValue = configuration.inspect<CompletePalettes>('palettes')?.globalValue;
+
+    try {
+      await configuration.update('palettes', {
+        dark: { normalText: '#123456' },
+        light: {}
+      }, vscode.ConfigurationTarget.Global);
+      const updated = updateCustomizationValue({}, true, '[Dark Test Theme]', 'dark');
+
+      assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), undefined);
+      assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#123456');
+    } finally {
+      await configuration.update('palettes', previousValue, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('treats the unified palette as authoritative over deprecated per-color settings', async () => {
+    const paletteConfiguration = vscode.workspace.getConfiguration('krlHighlighting');
+    const colorConfiguration = vscode.workspace.getConfiguration('krlHighlighting.colors');
+    const previousPalettes = paletteConfiguration.inspect<CompletePalettes>('palettes')?.globalValue;
+    const previousColor = colorConfiguration.inspect<string>('comments')?.globalValue;
+
+    try {
+      await paletteConfiguration.update('palettes', completePalettes('#112233'), vscode.ConfigurationTarget.Global);
+      await colorConfiguration.update('comments', '#ABCDEF', vscode.ConfigurationTarget.Global);
+      const updated = updateCustomizationValue({}, true, '[Dark Test Theme]', 'dark');
+
+      assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Comments'), '#112233');
+      assert.strictEqual(helperForeground(updated, '[Dark Test Theme]', 'Regular text'), '#112233');
+    } finally {
+      await colorConfiguration.update('comments', previousColor, vscode.ConfigurationTarget.Global);
+      await paletteConfiguration.update('palettes', previousPalettes, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('migrates legacy palette sources in their released precedence order', () => {
+    const migrated = mergeLegacyPaletteSources(
+      { comments: '#111111', normalText: '#AAAAAA' },
+      { dark: { comments: '#222222' }, light: { comments: '#DDDDDD' } },
+      { dark: { comments: '#333333' }, light: { comments: '#EEEEEE' } }
+    );
+
+    assert.strictEqual(migrated.dark.comments, '#333333');
+    assert.strictEqual(migrated.dark.normalText, '#AAAAAA');
+    assert.strictEqual(migrated.light.comments, '#EEEEEE');
+  });
+
+  test('uses the unified palette as a durable migration marker', () => {
+    assert.strictEqual(
+      paletteMigrationValue(
+        {},
+        { comments: '#111111' },
+        { dark: { comments: '#222222' } },
+        {}
+      ),
+      undefined
+    );
+    assert.deepStrictEqual(
+      paletteMigrationValue(
+        undefined,
+        { comments: '#111111' },
+        { dark: { comments: '#222222' } },
+        {}
+      ),
+      { dark: { comments: '#222222' }, light: {} }
+    );
+  });
+
+  test('reads only User values from deprecated per-color settings', async () => {
+    const configuration = vscode.workspace.getConfiguration('krlHighlighting.colors');
+    const inspected = configuration.inspect<string>('comments');
+
+    try {
+      await configuration.update('comments', '#111111', vscode.ConfigurationTarget.Global);
+      await configuration.update('comments', '#222222', vscode.ConfigurationTarget.Workspace);
+
+      assert.strictEqual(legacyUserColors().comments, '#111111');
+    } finally {
+      await configuration.update('comments', inspected?.workspaceValue, vscode.ConfigurationTarget.Workspace);
+      await configuration.update('comments', inspected?.globalValue, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('keeps distinct user-selected comment colors across dark and light theme synchronization', async () => {
+    const configuration = vscode.workspace.getConfiguration('krlHighlighting');
+    const previousValue = configuration.inspect<CompletePalettes>('palettes')?.globalValue;
+    const darkPalette = completePalettes('#112233').dark;
+    const lightPalette = completePalettes('#DDEEFF').light;
+    darkPalette.comments = '#FFFF00';
+    lightPalette.comments = '#FF0000';
+
+    try {
+      await configuration.update('palettes', {
+        dark: darkPalette,
+        light: lightPalette
+      }, vscode.ConfigurationTarget.Global);
+      const overwrittenByOlderWindow: TokenColorCustomizations = {
+        textMateRules: [helperRule('Comments', '#00FF00')],
+        '[Dark Test Theme]': { textMateRules: [helperRule('Comments', '#00FF00')] },
+        '[Light Test Theme]': { textMateRules: [] }
+      };
+
+      const dark = updateCustomizationValue(overwrittenByOlderWindow, true, '[Dark Test Theme]', 'dark');
+      const light = updateCustomizationValue(dark, true, '[Light Test Theme]', 'light');
+
+      assert.strictEqual(helperForeground(light, undefined, 'Comments'), undefined);
+      assert.strictEqual(helperForeground(light, '[Dark Test Theme]', 'Comments'), '#FFFF00');
+      assert.strictEqual(helperForeground(light, '[Light Test Theme]', 'Comments'), '#FF0000');
+    } finally {
+      await configuration.update('palettes', previousValue, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('validates complete palettes without silently discarding invalid hex values', () => {
+    const colors = completePalettes('#abc');
+    const normalized = validateSubmittedPalettes(colors);
+
+    assert.ok(normalized);
+    assert.strictEqual(normalized.dark.normalText, '#ABC');
+    assert.strictEqual(normalized.light.variableNames, '#ABC');
+
+    colors.light.variableNames = '001080';
+    assert.strictEqual(validateSubmittedPalettes(colors), undefined);
+  });
+
+  test('persists both palettes with one atomic User Settings update', async () => {
+    const next = completePalettes('#445566');
+    const updates: Array<{ section: string; value: unknown; target: vscode.ConfigurationTarget }> = [];
+    const configuration = {
+      update: async (
+        section: string,
+        value: unknown,
+        target: vscode.ConfigurationTarget
+      ): Promise<void> => {
+        updates.push({ section, value, target });
+      }
+    };
+
+    await persistPalettes(next, configuration);
+
+    assert.deepStrictEqual(updates, [{
+      section: 'palettes',
+      value: next,
+      target: vscode.ConfigurationTarget.Global
+    }]);
+  });
+
+  test('reports an atomic palette write failure without claiming a partial save', async () => {
+    const next = completePalettes('#445566');
+    let updateCount = 0;
+    const configuration = {
+      update: async (): Promise<void> => {
+        updateCount++;
+        throw new Error('synthetic write failure');
+      }
+    };
+
+    await assert.rejects(
+      persistPalettes(next, configuration),
+      /No palette changes were applied/
+    );
+    assert.strictEqual(updateCount, 1);
+  });
+
+  test('delivers asynchronous responses only to the panel that initiated the request', async () => {
+    const sourceMessages: unknown[] = [];
+    const replacementMessages: unknown[] = [];
+    const sourcePanel = {
+      webview: {
+        postMessage: async (message: unknown): Promise<boolean> => {
+          sourceMessages.push(message);
+          return true;
+        }
+      }
+    };
+    const replacementPanel = {
+      webview: {
+        postMessage: async (message: unknown): Promise<boolean> => {
+          replacementMessages.push(message);
+          return true;
+        }
+      }
+    };
+
+    assert.strictEqual(
+      await postMessageToCurrentPanel(sourcePanel, replacementPanel, { type: 'saved' }),
+      false
+    );
+    assert.deepStrictEqual(sourceMessages, []);
+    assert.deepStrictEqual(replacementMessages, []);
+
+    assert.strictEqual(
+      await postMessageToCurrentPanel(sourcePanel, sourcePanel, { type: 'saved' }),
+      true
+    );
+    assert.deepStrictEqual(sourceMessages, [{ type: 'saved' }]);
+  });
+
   test('settings editor renders color and diagnostics tabs with palette defaults', () => {
+    const extension = vscode.extensions.getExtension('MichaeINeumann.krl-helper');
+    assert.ok(extension);
+    const properties = extension.packageJSON.contributes.configuration.properties;
+    assert.strictEqual(properties['krlHighlighting.palettes'].scope, 'application');
+    assert.strictEqual(properties['krlHighlighting.applyCustomColors'].scope, 'application');
+    assert.ok(properties['krlHighlighting.colors.comments'].markdownDeprecationMessage);
+    const paletteNamePattern = Object.keys(
+      properties['krlHighlighting.palettes'].properties.dark.patternProperties
+    )[0];
+    assert.ok(new RegExp(paletteNamePattern).test('comments'));
+    assert.ok(!new RegExp(paletteNamePattern).test('comment'));
+    assert.strictEqual(
+      properties['krlHighlighting.palettes'].properties.dark.additionalProperties,
+      false
+    );
+
     const html = colorSettingsHtml({ cspSource: 'test-source' } as vscode.Webview, 'light');
 
     assert.ok(html.includes('role="tablist"'));
@@ -126,18 +518,40 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('id="dark-panel" role="tabpanel" aria-labelledby="dark-tab" hidden'));
     assert.ok(html.includes('id="light-panel" role="tabpanel" aria-labelledby="light-tab"><h2>Light colors</h2>'));
     assert.ok(html.includes('id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden'));
-    assert.ok(html.includes('data-palette="dark" data-key="normalText" data-default="#C0C0C0"'));
-    assert.ok(html.includes('data-palette="light" data-key="normalText" data-default="#000000"'));
+    assert.ok(html.includes('data-color-picker data-palette="dark" data-key="normalText"'));
+    assert.ok(html.includes('data-color-input data-palette="dark" data-key="normalText" data-default="#C0C0C0"'));
+    assert.ok(html.includes('data-color-input data-palette="light" data-key="normalText" data-default="#000000"'));
+    assert.ok(html.includes('Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.'));
+    assert.ok(html.includes("event.data.type === 'saveError'"));
+    assert.ok(html.includes("event.data.type === 'palettesState'"));
+    assert.ok(html.includes('const dirtyColorKeys = new Set()'));
+    assert.ok(html.includes('dirtyColorKeys.has(colorControlKey(input))'));
+    assert.ok(html.includes('Unsaved color edits were preserved.'));
+    assert.ok(html.includes('setColorControlsDisabled(true)'));
+    assert.ok(html.includes("event.data.message || 'Colors applied.'"));
+    assert.ok(html.includes('for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;'));
+    assert.ok(html.includes("setStatus('Default colors loaded for the ' + selectedPanel + ' theme. Apply Colors to save.');"));
+    assert.ok(!html.includes("vscode.postMessage({ type: 'reset', palette: selectedPanel })"));
     assert.ok(html.includes('data-key="localVariablePrefixes"'));
     assert.ok(html.includes('<option value="user"'));
     assert.ok(html.includes('<option value="workspace"'));
-    assert.ok(html.includes("type: 'reset', palette: selectedPanel"));
     assert.ok(html.includes("type: 'diagnosticReset'"));
     const script = /<script nonce="[^"]+">([\s\S]+)<\/script>/.exec(html)?.[1];
     assert.ok(script);
     assert.doesNotThrow(() => new Function(script));
   });
 });
+
+function completePalettes(color: string): { dark: Record<string, string>; light: Record<string, string> } {
+  const keys = [
+    'normalText', 'comments', 'blockComments', 'strings', 'numbers', 'programFlow',
+    'controlStructures', 'ifKeyword', 'switchKeyword', 'doKeyword', 'waitKeyword',
+    'variableNames', 'setupCommands', 'motionCommands', 'mathFunctions', 'ioCommands',
+    'typeDefinitions', 'systemVariables', 'listFunctions'
+  ];
+  const palette = (): Record<string, string> => Object.fromEntries(keys.map(key => [key, color]));
+  return { dark: palette(), light: palette() };
+}
 
 function helperRule(label: string, foreground: string): TextMateRule {
   return {
