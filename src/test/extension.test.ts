@@ -537,6 +537,64 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('diagnostics and navigation agree on visibility inside a nested KRC R1 tree', async () => {
+    // Both providers must select the same KRC/R1 occurrence. The inner tree owns the source, so a
+    // global declared only in the outer tree must be unresolved for diagnostics and navigation
+    // alike. The invariant asserted at the end is the property the two providers must share:
+    // a name is diagnostic-clean exactly when Go to Definition resolves it.
+    const outerUri = vscode.Uri.file(path.join(os.tmpdir(), `krl-helper-nested-${Date.now()}`));
+    const innerUri = vscode.Uri.joinPath(outerUri, 'KRC', 'R1', 'Program', 'extracted');
+    const sourceUri = vscode.Uri.joinPath(innerUri, 'KRC', 'R1', 'Program', 'nested.src');
+    const innerGlobalUri = vscode.Uri.joinPath(innerUri, 'KRC', 'R1', 'System', 'inner.dat');
+    const outerGlobalUri = vscode.Uri.joinPath(outerUri, 'KRC', 'R1', 'System', 'outer.dat');
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(innerUri, 'KRC', 'R1', 'Program'));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(innerUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(outerUri, 'KRC', 'R1', 'System'));
+    await vscode.workspace.fs.writeFile(sourceUri, Buffer.from([
+      'DEF Nested()',
+      '  bInnerGlobal = TRUE',
+      '  bOuterGlobal = TRUE',
+      'END',
+      ''
+    ].join('\n')));
+    await vscode.workspace.fs.writeFile(innerGlobalUri, Buffer.from(
+      'DEFDAT Inner PUBLIC\nGLOBAL BOOL bInnerGlobal=TRUE\nENDDAT\n'
+    ));
+    await vscode.workspace.fs.writeFile(outerGlobalUri, Buffer.from(
+      'DEFDAT Outer PUBLIC\nGLOBAL BOOL bOuterGlobal=TRUE\nENDDAT\n'
+    ));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(sourceUri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnosticCondition(sourceUri, values =>
+        values.some(diagnostic => diagnostic.message.includes("'bOuterGlobal'"))
+      );
+
+      for (const identifier of ['bInnerGlobal', 'bOuterGlobal']) {
+        const position = document.positionAt(lastIdentifierOffset(document.getText(), identifier));
+        const definitions = await vscode.commands.executeCommand<vscode.Location[] | undefined>(
+          'vscode.executeDefinitionProvider', sourceUri, position
+        );
+        const navigationResolves = (definitions?.length ?? 0) > 0;
+        const diagnosticClean = !diagnostics.some(diagnostic =>
+          diagnostic.message.includes(`'${identifier}'`)
+        );
+        assert.strictEqual(
+          diagnosticClean,
+          navigationResolves,
+          `${identifier}: diagnostics and navigation disagree `
+          + `(clean=${diagnosticClean}, resolves=${navigationResolves})`
+        );
+      }
+
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'bInnerGlobal'")));
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    } finally {
+      await vscode.workspace.fs.delete(outerUri, { recursive: true, useTrash: false });
+    }
+  });
+
   test('uses only the nearest $config.dat for standalone source globals', async () => {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(workspaceFolder);

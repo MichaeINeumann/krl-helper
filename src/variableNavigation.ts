@@ -16,6 +16,13 @@ import {
   parseKrlVariableDeclarations
 } from './variableParser';
 import { parseKrlFunctions } from './functionParser';
+import {
+  inferKrlTreeRoot,
+  isProjectDeclarationFile,
+  normalizeProjectPath,
+  scanProjectTree,
+  selectNearestPath
+} from './projectScope';
 
 type KrlProjectFileKind = 'source' | 'dat' | 'other';
 
@@ -45,7 +52,6 @@ interface ProjectVariableIndex {
   configPaths: string[];
 }
 
-const ignoredDirectories = new Set(['.git', '.svn', '.vscode', 'node_modules', 'dist', 'out']);
 
 export class KrlVariableDefinitionProvider implements vscode.DefinitionProvider, vscode.Disposable {
   private readonly subscriptions: vscode.Disposable[] = [];
@@ -290,16 +296,8 @@ function selectNearestConfigId(
   if (currentUri.scheme !== 'file') {
     return normalizePath(configPaths[0]);
   }
-  let nearestPath = configPaths[0];
-  let nearestDistance = pathDistance(currentUri.fsPath, nearestPath);
-  for (const configPath of configPaths.slice(1)) {
-    const distance = pathDistance(currentUri.fsPath, configPath);
-    if (distance < nearestDistance) {
-      nearestPath = configPath;
-      nearestDistance = distance;
-    }
-  }
-  return normalizePath(nearestPath);
+  const nearest = selectNearestPath(currentUri.fsPath, configPaths);
+  return nearest === null ? undefined : normalizePath(nearest);
 }
 
 function deduplicateDefinitions(definitions: IndexedKrlVariable[]): IndexedKrlVariable[] {
@@ -375,82 +373,21 @@ function inferKrlProjectRoot(uri: vscode.Uri): string | undefined {
   if (uri.scheme !== 'file') {
     return undefined;
   }
-  const parsedPath = path.parse(uri.fsPath);
-  const segments = path.relative(parsedPath.root, uri.fsPath).split(path.sep).filter(Boolean);
-  const krcIndex = segments.findIndex((segment, index) =>
-    segment.toLowerCase() === 'krc' && segments[index + 1]?.toLowerCase() === 'r1'
-  );
-  if (krcIndex === -1) {
-    return undefined;
-  }
-  return path.join(parsedPath.root, ...segments.slice(0, krcIndex + 2));
+  return inferKrlTreeRoot(uri.fsPath) ?? undefined;
 }
 
 async function scanProjectFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  const directories = [{ path: root, ancestorRealPaths: new Set<string>() }];
-  while (directories.length > 0) {
-    const pending = directories.pop();
-    if (!pending) {
-      continue;
-    }
-    const directory = pending.path;
-    let realDirectory: string;
-    let entries: fs.Dirent[];
-    try {
-      realDirectory = normalizePath(await fs.promises.realpath(directory));
-      if (pending.ancestorRealPaths.has(realDirectory)) {
-        continue;
-      }
-      entries = await fs.promises.readdir(directory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    const ancestorRealPaths = new Set(pending.ancestorRealPaths);
-    ancestorRealPaths.add(realDirectory);
-    for (const entry of entries) {
-      const entryPath = path.join(directory, entry.name);
-      let directoryEntry = entry.isDirectory();
-      let fileEntry = entry.isFile();
-      if (entry.isSymbolicLink()) {
-        try {
-          const stats = await fs.promises.stat(entryPath);
-          directoryEntry = stats.isDirectory();
-          fileEntry = stats.isFile();
-        } catch {
-          continue;
-        }
-      }
-      if (directoryEntry) {
-        if (!ignoredDirectories.has(entry.name.toLowerCase())) {
-          directories.push({ path: entryPath, ancestorRealPaths });
-        }
-      } else if (fileEntry && /\.(?:src|sub|dat)$/i.test(entry.name)) {
-        files.push(entryPath);
-      }
-    }
-  }
-  return files;
+  return scanProjectTree(root, isProjectDeclarationFile);
 }
 
 function normalizePath(filePath: string): string {
-  const normalized = path.resolve(filePath);
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  return normalizeProjectPath(filePath);
 }
 
 function uriKey(uri: vscode.Uri): string {
   return uri.scheme === 'file' ? normalizePath(uri.fsPath) : uri.toString();
 }
 
-function pathDistance(leftPath: string, rightPath: string): number {
-  const left = path.normalize(leftPath).toLowerCase().split(path.sep).filter(Boolean);
-  const right = path.normalize(rightPath).toLowerCase().split(path.sep).filter(Boolean);
-  let common = 0;
-  while (common < Math.min(left.length, right.length) && left[common] === right[common]) {
-    common += 1;
-  }
-  return left.length - common + right.length - common;
-}
 
 function positionForOffset(definition: IndexedKrlVariable, offset: number): vscode.Position {
   return new vscode.Position(definition.line, Math.max(0, offset - definition.lineStartOffset));
