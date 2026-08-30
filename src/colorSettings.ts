@@ -375,7 +375,7 @@ export async function synchronizeTokenColors(): Promise<void> {
       vscode.ConfigurationTarget.Global
     );
   }
-  await synchronizeWorkspaceHelperRules(enabled, targets);
+  await cleanLegacyWorkspaceHelperRules();
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
@@ -445,55 +445,27 @@ export function updateCustomizationTargets(
   return nextValue;
 }
 
-/**
- * Mirrors managed rules only into existing workspace theme overrides.
- *
- * VS Code merges `editor.tokenColorCustomizations` by configuration layer, but a workspace-level
- * theme object replaces the matching User-level object. Keeping the managed rules in that existing
- * object prevents unrelated workspace TextMate rules from masking KRL colors without creating new
- * workspace overrides where none existed.
- */
-export function updateWorkspaceCustomizationTargets(
-  currentValue: TokenColorCustomizations,
-  enabled: boolean,
-  targets: readonly ThemePaletteTarget[]
-): TokenColorCustomizations {
-  const cleanedValue = removeAllHelperColors(currentValue);
-  if (!enabled) {
-    return cleanedValue;
+export function managedThemeSelector(selector: string): string {
+  const match = /^\[([^\]]+)\]$/.exec(selector);
+  if (!match) {
+    return selector;
   }
+  // VS Code treats multiple bracketed names as alternatives. Repeating the exact name therefore
+  // matches only that theme while producing a different object key from a workspace's usual
+  // single-name selector, so the two configuration layers are both retained during merging.
+  return `[${match[1]}][${match[1]}]`;
+}
 
-  const targetsBySelector = new Map(
-    targets.filter(target => target.selector).map(target => [target.selector, target])
-  );
-  let nextValue = cleanedValue;
-  for (const [selector, value] of Object.entries(cleanedValue)) {
-    const target = targetsBySelector.get(selector);
-    if (!target || !value || typeof value !== 'object' || Array.isArray(value)) {
-      continue;
-    }
-    const themeValue = value as TokenColorCustomizations;
-    const nextThemeValue: TokenColorCustomizations = {
-      ...themeValue,
-      textMateRules: [
-        ...rulesWithoutHelperColors(themeValue.textMateRules),
-        ...buildRules(target.palette)
-      ]
-    };
-    if (!valuesEqual(themeValue, nextThemeValue)) {
-      if (nextValue === cleanedValue) {
-        nextValue = { ...cleanedValue };
-      }
-      nextValue[selector] = nextThemeValue;
-    }
-  }
-  return nextValue;
+function isManagedThemeSelector(selector: string): boolean {
+  const match = /^\[([^\]]+)\]\[([^\]]+)\]$/.exec(selector);
+  return !!match && match[1] === match[2];
 }
 
 function removeConflictingHelperColors(
   currentValue: TokenColorCustomizations,
   activeSelectors: ReadonlySet<string>
 ): TokenColorCustomizations {
+  const usesManagedThemeSelectors = [...activeSelectors].some(isManagedThemeSelector);
   let nextValue = currentValue;
   if (Array.isArray(currentValue.textMateRules) && currentValue.textMateRules.some(isKrlRule)) {
     nextValue = {
@@ -509,7 +481,9 @@ function removeConflictingHelperColors(
     const themeValue = value as TokenColorCustomizations;
     const hasHelperRules = Array.isArray(themeValue.textMateRules) && themeValue.textMateRules.some(isKrlRule);
     const themeCount = key.match(/\[[^\]]+\]/g)?.length ?? 0;
-    if (hasHelperRules && (activeSelectors.has(key) || themeCount !== 1)) {
+    const managedSelector = isManagedThemeSelector(key);
+    const legacySelector = usesManagedThemeSelectors && !managedSelector;
+    if (hasHelperRules && (activeSelectors.has(key) || (!managedSelector && themeCount !== 1) || legacySelector)) {
       if (nextValue === currentValue) {
         nextValue = { ...currentValue };
       }
@@ -564,7 +538,9 @@ function configuredThemeTargets(): ThemePaletteTarget[] {
   // No theme name could be resolved, for example because every relevant workbench setting is
   // empty. An unscoped rule set still colors the active theme, so keep it as the fallback rather
   // than leaving KRL files without colors.
-  return targets.length > 0 ? targets : [{ selector: '', palette }];
+  return targets.length > 0
+    ? targets.map(target => ({ ...target, selector: managedThemeSelector(target.selector) }))
+    : [{ selector: '', palette }];
 }
 
 function themeSelectionConfiguration(): ThemeSelectionConfiguration {
@@ -619,34 +595,40 @@ function synchronizeSafely(): void {
   void queueColorUpdate(() => synchronizeTokenColors());
 }
 
-async function synchronizeWorkspaceLayer(
+async function cleanLegacyWorkspaceLayer(
   configuration: vscode.WorkspaceConfiguration,
   target: vscode.ConfigurationTarget,
-  value: TokenColorCustomizations | undefined,
-  enabled: boolean,
-  targets: readonly ThemePaletteTarget[]
+  value: TokenColorCustomizations | undefined
 ): Promise<void> {
   if (!value || typeof value !== 'object') {
     return;
   }
-  const nextValue = updateWorkspaceCustomizationTargets(value, enabled, targets);
+  const nextValue = removeAllHelperColors(value);
   if (!valuesEqual(value, nextValue)) {
     await configuration.update('tokenColorCustomizations', nextValue, target);
   }
 }
 
-export async function synchronizeWorkspaceHelperRules(
-  enabled: boolean,
-  targets: readonly ThemePaletteTarget[]
-): Promise<void> {
+/** Removes extension-owned rules written to shared settings by older versions. */
+export async function cleanLegacyWorkspaceHelperRules(): Promise<void> {
   const workspaceConfiguration = vscode.workspace.getConfiguration('editor');
-  await synchronizeWorkspaceLayer(
+  await cleanLegacyWorkspaceLayer(
     workspaceConfiguration,
     vscode.ConfigurationTarget.Workspace,
-    workspaceConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue,
-    enabled,
-    targets
+    workspaceConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue
   );
+
+  if (!vscode.workspace.workspaceFile) {
+    return;
+  }
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const folderConfiguration = vscode.workspace.getConfiguration('editor', folder.uri);
+    await cleanLegacyWorkspaceLayer(
+      folderConfiguration,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+      folderConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceFolderValue
+    );
+  }
 }
 
 /**

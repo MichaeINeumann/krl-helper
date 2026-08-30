@@ -68,7 +68,7 @@ Both palettes are stored together in the user setting `krlHighlighting.palettes`
 
 Open **KRL Helper: Open Settings** to edit them. Every color accepts `#RGB`, `#RGBA`, `#RRGGBB`, and `#RRGGBBAA`, entered either through the picker or typed directly into the hex field. **Restore Defaults** changes the selected palette draft only; **Apply Colors** then saves both palettes in a single atomic write.
 
-Managed rules are written to User Settings and scoped per theme, so dark and light palettes stay available when VS Code windows use different themes. If an existing Workspace theme override would mask those User rules, KRL Helper mirrors its managed rules into that override while preserving unrelated rules; it does not create new workspace overrides. The rules are recomputed from the stored palettes and skipped when nothing would change, which keeps concurrent windows from overwriting each other repeatedly. Palettes from older extension versions are migrated automatically on first start.
+Managed rules are written only to User Settings and scoped with a distinct repeated exact-theme selector, so dark and light palettes stay available when VS Code windows use different themes. Existing single exact-theme overrides in Workspace and Workspace Folder settings coexist with those selectors and keep all unrelated rules; KRL Helper does not write profile-specific palettes into shared workspace files. The rules are recomputed from the stored palettes and skipped when nothing would change, which keeps concurrent windows and profiles from overwriting each other repeatedly. Palettes and extension-owned workspace rules from older extension versions are migrated automatically on first start.
 
 #### Deprecated per-color settings
 

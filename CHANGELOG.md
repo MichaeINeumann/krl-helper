@@ -10,7 +10,7 @@
 
 - Persist custom dark and light syntax palettes in VS Code user settings so they survive extension updates, reinstalls, and cleared extension storage, and participate in Settings Sync
 - Keep theme-scoped palette rules synchronized across VS Code theme changes and multiple open windows
-- Preserve KRL colors when an existing Workspace theme customization overrides User TextMate rules
+- Preserve KRL colors beneath existing Workspace and Workspace Folder theme customizations without writing profile-specific palettes into shared settings
 
 ### Deprecations
 
