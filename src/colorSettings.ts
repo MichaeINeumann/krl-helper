@@ -1,4 +1,3 @@
-import * as os from 'os';
 import * as vscode from 'vscode';
 import {
   DiagnosticSettingKey,
@@ -8,13 +7,7 @@ import {
 
 const rulePrefix = 'KRL Helper: ';
 const storageKey = 'krlHelper.syntaxColors';
-// Bumped when managed rules stopped being written to the Workspace and Workspace Folder layers,
-// so that helper rules left behind there by earlier versions are removed once.
-const deterministicMigrationKey = 'krlHelper.syntaxColorsDeterministic.v6';
-const paletteMigrationKey = 'krlHelper.syntaxColorsConfiguration.v3';
 const colorPattern = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
-const paletteFileFormat = 'krl-helper.palettes';
-const paletteFileVersion = 1;
 
 type TextMateScope = string | readonly string[];
 
@@ -67,7 +60,7 @@ let colorUpdateQueue: Promise<void> = Promise.resolve();
 
 export type PaletteName = 'dark' | 'light';
 
-interface StoredPalettes {
+export interface StoredPalettes {
   dark?: Record<string, string>;
   light?: Record<string, string>;
 }
@@ -97,8 +90,6 @@ interface PaletteConfiguration {
 }
 
 class PalettePersistenceError extends Error {}
-
-export class PaletteFileError extends Error {}
 
 function activePalette(): PaletteName {
   const kind = vscode.window.activeColorTheme.kind;
@@ -201,6 +192,12 @@ function configuredPaletteColors(palette: PaletteName): Record<string, string> {
   return configuredPalettes()[palette] ?? {};
 }
 
+function hasConfiguredPaletteSetting(): boolean {
+  return vscode.workspace
+    .getConfiguration('krlHighlighting')
+    .inspect<unknown>('palettes')?.globalValue !== undefined;
+}
+
 function legacyConfiguredPaletteColors(palette: PaletteName): Record<string, string> {
   return validColors(vscode.workspace
     .getConfiguration('krlHighlighting.palettes')
@@ -208,10 +205,14 @@ function legacyConfiguredPaletteColors(palette: PaletteName): Record<string, str
 }
 
 function storedColors(palette: PaletteName): Record<string, string> {
-  const migrationComplete = extensionContext?.globalState.get<boolean>(paletteMigrationKey, false) ?? false;
+  if (hasConfiguredPaletteSetting()) {
+    return configuredPaletteColors(palette);
+  }
+
   return {
-    ...(migrationComplete ? {} : legacyStoredColors(palette)),
-    ...configuredPaletteColors(palette)
+    ...(palette === 'dark' ? legacyUserColors() : {}),
+    ...legacyStoredColors(palette),
+    ...legacyConfiguredPaletteColors(palette)
   };
 }
 
@@ -219,17 +220,50 @@ function storedColors(palette: PaletteName): Record<string, string> {
  * Reads the deprecated per-color `krlHighlighting.colors.*` settings. These are only consulted
  * once during migration; afterwards `krlHighlighting.palettes` is the single source of truth.
  */
-function legacyNativeColors(): Record<string, string> {
+export function legacyUserColors(): Record<string, string> {
   const configuration = vscode.workspace.getConfiguration('krlHighlighting.colors');
   const colors: Record<string, string> = {};
   for (const definition of colorDefinitions) {
     const inspected = configuration.inspect<unknown>(definition.key);
-    const value = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
+    const value = inspected?.globalValue;
     if (typeof value === 'string' && colorPattern.test(value)) {
       colors[definition.key] = value.toUpperCase();
     }
   }
   return colors;
+}
+
+export function mergeLegacyPaletteSources(
+  nativeUserColors: Readonly<Record<string, string>>,
+  stored: StoredPalettes,
+  formerSettings: StoredPalettes
+): CompletePalettes {
+  return {
+    dark: {
+      ...validColors(nativeUserColors),
+      ...validColors(stored.dark),
+      ...validColors(formerSettings.dark)
+    },
+    light: {
+      ...validColors(stored.light),
+      ...validColors(formerSettings.light)
+    }
+  };
+}
+
+export function paletteMigrationValue(
+  configuredValue: unknown,
+  nativeUserColors: Readonly<Record<string, string>>,
+  stored: StoredPalettes,
+  formerSettings: StoredPalettes
+): CompletePalettes | undefined {
+  if (configuredValue !== undefined) {
+    return undefined;
+  }
+  const migrated = mergeLegacyPaletteSources(nativeUserColors, stored, formerSettings);
+  return Object.keys(migrated.dark).length > 0 || Object.keys(migrated.light).length > 0
+    ? migrated
+    : undefined;
 }
 
 export function validateSubmittedPalettes(value: unknown): CompletePalettes | undefined {
@@ -253,69 +287,6 @@ export function validateSubmittedPalettes(value: unknown): CompletePalettes | un
     }
   }
   return normalized;
-}
-
-export function serializePaletteFile(palettes: CompletePalettes): string {
-  return `${JSON.stringify({
-    format: paletteFileFormat,
-    version: paletteFileVersion,
-    dark: palettes.dark,
-    light: palettes.light
-  }, null, 2)}\n`;
-}
-
-/**
- * Reads an exported palette file and merges it onto the currently effective palettes.
- *
- * Both the exported wrapper and a bare `{ dark, light }` object are accepted so that a palette can
- * also be copied straight out of `settings.json`. Keys the file omits keep their current color;
- * unknown keys and malformed colors are reported instead of being dropped silently.
- */
-export function parsePaletteFile(content: string, current: CompletePalettes): CompletePalettes {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new PaletteFileError('The palette file is not valid JSON.');
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new PaletteFileError('The palette file must contain a JSON object.');
-  }
-
-  const file = parsed as Record<string, unknown>;
-  if (file.format !== undefined && file.format !== paletteFileFormat) {
-    throw new PaletteFileError(`Unsupported palette file format '${String(file.format)}'.`);
-  }
-  if (file.version !== undefined && file.version !== paletteFileVersion) {
-    throw new PaletteFileError(`Unsupported palette file version '${String(file.version)}'.`);
-  }
-  if (file.dark === undefined && file.light === undefined) {
-    throw new PaletteFileError('The palette file contains neither a dark nor a light palette.');
-  }
-
-  const knownKeys = new Set(colorDefinitions.map(definition => definition.key));
-  const merged: CompletePalettes = { dark: { ...current.dark }, light: { ...current.light } };
-  for (const palette of ['dark', 'light'] as const) {
-    const paletteValue = file[palette];
-    if (paletteValue === undefined) {
-      continue;
-    }
-    if (!paletteValue || typeof paletteValue !== 'object' || Array.isArray(paletteValue)) {
-      throw new PaletteFileError(`The '${palette}' palette must be a JSON object.`);
-    }
-    for (const [key, value] of Object.entries(paletteValue as Record<string, unknown>)) {
-      if (!knownKeys.has(key)) {
-        throw new PaletteFileError(`Unknown color '${palette}.${key}' in the palette file.`);
-      }
-      if (typeof value !== 'string' || !colorPattern.test(value.trim())) {
-        throw new PaletteFileError(
-          `Invalid color for '${palette}.${key}'. Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.`
-        );
-      }
-      merged[palette][key] = value.trim().toUpperCase();
-    }
-  }
-  return merged;
 }
 
 export async function persistPalettes(
@@ -595,70 +566,68 @@ function synchronizeSafely(): void {
   void queueColorUpdate(() => synchronizeTokenColors());
 }
 
-async function migrateLegacyHelperRules(context: vscode.ExtensionContext): Promise<void> {
-  if (context.globalState.get<boolean>(deterministicMigrationKey, false)) {
+async function cleanLegacyHelperRules(
+  configuration: vscode.WorkspaceConfiguration,
+  target: vscode.ConfigurationTarget,
+  value: TokenColorCustomizations | undefined
+): Promise<void> {
+  if (!value || typeof value !== 'object') {
     return;
   }
-
-  const editorConfiguration = vscode.workspace.getConfiguration('editor');
-  const inspected = editorConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations');
-  const layers: readonly { target: vscode.ConfigurationTarget; value?: TokenColorCustomizations }[] = [
-    { target: vscode.ConfigurationTarget.Global, value: inspected?.globalValue },
-    { target: vscode.ConfigurationTarget.Workspace, value: inspected?.workspaceValue },
-    { target: vscode.ConfigurationTarget.WorkspaceFolder, value: inspected?.workspaceFolderValue }
-  ];
-
-  for (const layer of layers) {
-    if (!layer.value || typeof layer.value !== 'object') {
-      continue;
-    }
-    const cleanedValue = removeAllHelperColors(layer.value);
-    if (JSON.stringify(layer.value) !== JSON.stringify(cleanedValue)) {
-      await editorConfiguration.update('tokenColorCustomizations', cleanedValue, layer.target);
-    }
+  const cleanedValue = removeAllHelperColors(value);
+  if (!valuesEqual(value, cleanedValue)) {
+    await configuration.update('tokenColorCustomizations', cleanedValue, target);
   }
+}
 
-  await context.globalState.update(deterministicMigrationKey, true);
+export async function cleanLegacyWorkspaceHelperRules(): Promise<void> {
+  const workspaceConfiguration = vscode.workspace.getConfiguration('editor');
+  await cleanLegacyHelperRules(
+    workspaceConfiguration,
+    vscode.ConfigurationTarget.Workspace,
+    workspaceConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceValue
+  );
+
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    const folderConfiguration = vscode.workspace.getConfiguration('editor', folder.uri);
+    await cleanLegacyHelperRules(
+      folderConfiguration,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+      folderConfiguration.inspect<TokenColorCustomizations>('tokenColorCustomizations')?.workspaceFolderValue
+    );
+  }
 }
 
 /**
- * Folds every historical palette source into the single `krlHighlighting.palettes` setting.
+ * Folds historical user-level palette sources into the single `krlHighlighting.palettes` setting.
  *
- * The sources are applied in increasing order of precedence so that the colors a user currently
- * sees stay unchanged: extension global state, the former per-palette settings, the unified
- * setting, and finally the deprecated per-color `krlHighlighting.colors.*` values, which used to
- * override the dark palette.
+ * Presence of the unified setting is the durable migration marker. This makes the migration
+ * idempotent even after a reinstall or cleared extension state. Workspace-scoped legacy values
+ * are deliberately not copied into the application-scoped palette.
  */
-async function migrateLegacyPalettes(context: vscode.ExtensionContext): Promise<void> {
-  if (context.globalState.get<boolean>(paletteMigrationKey, false)) {
-    return;
-  }
-
+async function migrateLegacyPalettes(): Promise<void> {
   const configuration = vscode.workspace.getConfiguration('krlHighlighting');
-  const configured = configuredPalettes();
-  const migrated: CompletePalettes = {
-    dark: {
-      ...legacyStoredColors('dark'),
-      ...legacyConfiguredPaletteColors('dark'),
-      ...(configured.dark ?? {}),
-      ...legacyNativeColors()
+  const migrated = paletteMigrationValue(
+    configuration.inspect<unknown>('palettes')?.globalValue,
+    legacyUserColors(),
+    {
+      dark: legacyStoredColors('dark'),
+      light: legacyStoredColors('light')
     },
-    light: {
-      ...legacyStoredColors('light'),
-      ...legacyConfiguredPaletteColors('light'),
-      ...(configured.light ?? {})
+    {
+      dark: legacyConfiguredPaletteColors('dark'),
+      light: legacyConfiguredPaletteColors('light')
     }
-  };
-  if (Object.keys(migrated.dark).length > 0 || Object.keys(migrated.light).length > 0) {
+  );
+  if (migrated) {
     await configuration.update('palettes', migrated, vscode.ConfigurationTarget.Global);
   }
-  await context.globalState.update(paletteMigrationKey, true);
 }
 
-async function initializeTokenColors(context: vscode.ExtensionContext): Promise<void> {
-  await migrateLegacyHelperRules(context);
-  await migrateLegacyPalettes(context);
+async function initializeTokenColors(): Promise<void> {
+  await migrateLegacyPalettes();
   await synchronizeTokenColors();
+  await cleanLegacyWorkspaceHelperRules();
 }
 
 function colorPickerValue(value: string): string {
@@ -822,7 +791,7 @@ export function colorSettingsHtml(
   </div>
   ${palettes}
   <section id="diagnostics-panel" role="tabpanel" aria-labelledby="diagnostics-tab" hidden><h2>Diagnostics</h2><p>Enter one literal prefix per line. Values are trimmed and duplicates are removed case-insensitively.</p>${diagnosticCards}</section>
-  <div id="color-actions" class="actions"><button type="button" id="import" class="secondary">Import File...</button><button type="button" id="export" class="secondary">Export File...</button><button type="button" id="reset" class="secondary">Restore Defaults</button><button type="button" id="save">Apply Colors</button></div>
+  <div id="color-actions" class="actions"><button type="button" id="reset" class="secondary">Restore Defaults</button><button type="button" id="save">Apply Colors</button></div>
   <div id="status" role="status"></div>
   <script nonce="${scriptNonce}">
     const vscode = acquireVsCodeApi();
@@ -872,7 +841,7 @@ export function colorSettingsHtml(
     function setColorControlsDisabled(disabled) {
       colorSavePending = disabled;
       for (const control of [...colorInputs, ...colorPickers]) control.disabled = disabled;
-      for (const id of ['save', 'reset', 'import', 'export']) document.getElementById(id).disabled = disabled;
+      for (const id of ['save', 'reset']) document.getElementById(id).disabled = disabled;
     }
 
     function renderPaletteColors(colors) {
@@ -988,16 +957,6 @@ export function colorSettingsHtml(
       setStatus('Applying colors...');
       vscode.postMessage({ type: 'save', colors });
     });
-    document.getElementById('export').addEventListener('click', () => {
-      if (colorSavePending) return;
-      setStatus('Choose where to export the saved palettes...');
-      vscode.postMessage({ type: 'export' });
-    });
-    document.getElementById('import').addEventListener('click', () => {
-      if (colorSavePending) return;
-      setStatus('Choose a palette file to import...');
-      vscode.postMessage({ type: 'import' });
-    });
     document.getElementById('reset').addEventListener('click', () => {
       if (colorSavePending || !paletteNames.includes(selectedPanel)) return;
       for (const input of colorInputs.filter(candidate => candidate.dataset.palette === selectedPanel)) {
@@ -1031,90 +990,6 @@ export function colorSettingsHtml(
   </script>
 </body>
 </html>`;
-}
-
-async function reportPaletteStatus(message: string, error = false): Promise<void> {
-  if (error) {
-    void vscode.window.showErrorMessage(`KRL Helper: ${message}`);
-  } else {
-    void vscode.window.showInformationMessage(`KRL Helper: ${message}`);
-  }
-  await colorPanel?.webview.postMessage({
-    type: error ? 'saveError' : 'palettesState',
-    colors: paletteSettingsView(),
-    message
-  });
-}
-
-export async function exportPalettes(): Promise<void> {
-  const defaultDirectory = vscode.workspace.workspaceFolders?.[0]?.uri
-    ?? (os.homedir() ? vscode.Uri.file(os.homedir()) : undefined);
-  const target = await vscode.window.showSaveDialog({
-    title: 'Export KRL Helper Palettes',
-    saveLabel: 'Export',
-    filters: { 'KRL Helper palettes': ['json'] },
-    defaultUri: defaultDirectory
-      ? vscode.Uri.joinPath(defaultDirectory, 'krl-helper-palettes.json')
-      : undefined
-  });
-  if (!target) {
-    return;
-  }
-
-  try {
-    const content = serializePaletteFile(paletteSettingsView());
-    await vscode.workspace.fs.writeFile(target, Buffer.from(content, 'utf8'));
-  } catch (error) {
-    await reportPaletteStatus(
-      `The palettes could not be exported. ${error instanceof Error ? error.message : String(error)}`,
-      true
-    );
-    return;
-  }
-  await reportPaletteStatus(`Palettes exported to ${target.fsPath}.`);
-}
-
-export async function importPalettes(): Promise<void> {
-  const selection = await vscode.window.showOpenDialog({
-    title: 'Import KRL Helper Palettes',
-    openLabel: 'Import',
-    canSelectMany: false,
-    filters: { 'KRL Helper palettes': ['json'] }
-  });
-  const source = selection?.[0];
-  if (!source) {
-    return;
-  }
-
-  let imported: CompletePalettes;
-  try {
-    const content = await vscode.workspace.fs.readFile(source);
-    imported = parsePaletteFile(Buffer.from(content).toString('utf8'), paletteSettingsView());
-  } catch (error) {
-    await reportPaletteStatus(
-      error instanceof PaletteFileError
-        ? error.message
-        : `The palette file could not be read. ${error instanceof Error ? error.message : String(error)}`,
-      true
-    );
-    return;
-  }
-
-  try {
-    await queueColorUpdate(async () => {
-      await persistPalettes(imported);
-      await synchronizeTokenColors();
-    });
-  } catch (error) {
-    await reportPaletteStatus(
-      error instanceof PalettePersistenceError
-        ? error.message
-        : 'The palettes were imported, but the syntax colors could not be applied. Reload VS Code.',
-      true
-    );
-    return;
-  }
-  await reportPaletteStatus(`Palettes imported from ${source.fsPath}.`);
 }
 
 export async function openColorSettings(context: vscode.ExtensionContext): Promise<void> {
@@ -1160,10 +1035,6 @@ export async function openColorSettings(context: vscode.ExtensionContext): Promi
         return;
       }
       await colorPanel?.webview.postMessage({ type: 'saved' });
-    } else if (message?.type === 'export') {
-      await exportPalettes();
-    } else if (message?.type === 'import') {
-      await importPalettes();
     } else if (message?.type === 'diagnosticUpdate' || message?.type === 'diagnosticReset') {
       const definition = diagnosticSettingDefinitions.find(candidate => candidate.key === message.key);
       const scope = message.scope === 'workspace' ? 'workspace' : message.scope === 'user' ? 'user' : undefined;
@@ -1189,8 +1060,6 @@ export function initializeColorSettings(context: vscode.ExtensionContext): void 
   extensionContext = context;
   context.subscriptions.push(
     vscode.commands.registerCommand('krlHelper.openColorSettings', () => openColorSettings(context)),
-    vscode.commands.registerCommand('krlHelper.exportColorSettings', () => exportPalettes()),
-    vscode.commands.registerCommand('krlHelper.importColorSettings', () => importPalettes()),
     vscode.workspace.onDidChangeConfiguration(event => {
       if (event.affectsConfiguration('krlHighlighting')
         || event.affectsConfiguration('editor.tokenColorCustomizations')
@@ -1216,5 +1085,5 @@ export function initializeColorSettings(context: vscode.ExtensionContext): void 
       synchronizeSafely();
     })
   );
-  void queueColorUpdate(() => initializeTokenColors(context));
+  void queueColorUpdate(() => initializeTokenColors());
 }

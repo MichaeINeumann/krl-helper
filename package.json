@@ -61,14 +61,6 @@
       {
         "command": "krlHelper.toggleLineComment",
         "title": "KRL Helper: Toggle Line Comment"
-      },
-      {
-        "command": "krlHelper.exportColorSettings",
-        "title": "KRL Helper: Export Color Palettes..."
-      },
-      {
-        "command": "krlHelper.importColorSettings",
-        "title": "KRL Helper: Import Color Palettes..."
       }
     ],
     "keybindings": [
@@ -305,17 +297,23 @@
           "properties": {
             "dark": {
               "type": "object",
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
-              }
+              "patternProperties": {
+                "^(?:normalText|comments|blockComments|strings|numbers|programFlow|controlStructures|ifKeyword|switchKeyword|doKeyword|waitKeyword|variableNames|setupCommands|motionCommands|mathFunctions|ioCommands|typeDefinitions|systemVariables|listFunctions)$": {
+                  "type": "string",
+                  "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+                }
+              },
+              "additionalProperties": false
             },
             "light": {
               "type": "object",
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
-              }
+              "patternProperties": {
+                "^(?:normalText|comments|blockComments|strings|numbers|programFlow|controlStructures|ifKeyword|switchKeyword|doKeyword|waitKeyword|variableNames|setupCommands|motionCommands|mathFunctions|ioCommands|typeDefinitions|systemVariables|listFunctions)$": {
+                  "type": "string",
+                  "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false,
