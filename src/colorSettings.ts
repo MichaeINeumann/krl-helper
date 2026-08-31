@@ -271,13 +271,31 @@ export function paletteMigrationValue(
   stored: StoredPalettes,
   formerSettings: StoredPalettes
 ): CompletePalettes | undefined {
-  if (configuredValue !== undefined) {
+  const configured = paletteColors(configuredValue);
+  const hasFormerColors = Object.keys(validColors(formerSettings.dark)).length > 0
+    || Object.keys(validColors(formerSettings.light)).length > 0;
+  if (configuredValue !== undefined && !hasFormerColors) {
     return undefined;
   }
   const migrated = mergeLegacyPaletteSources(nativeUserColors, stored, formerSettings);
+  if (configuredValue !== undefined) {
+    Object.assign(migrated.dark, configured.dark);
+    Object.assign(migrated.light, configured.light);
+  }
   return Object.keys(migrated.dark).length > 0 || Object.keys(migrated.light).length > 0
     ? migrated
     : undefined;
+}
+
+function paletteColors(value: unknown): CompletePalettes {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { dark: {}, light: {} };
+  }
+  const palettes = value as Record<string, unknown>;
+  return {
+    dark: validColors(palettes.dark),
+    light: validColors(palettes.light)
+  };
 }
 
 export function validateSubmittedPalettes(value: unknown): CompletePalettes | undefined {
@@ -321,6 +339,19 @@ export async function cleanupLegacyPaletteSettings(
     if (configuration.inspect<unknown>(palette)?.globalValue !== undefined) {
       await configuration.update(palette, undefined, vscode.ConfigurationTarget.Global);
     }
+  }
+}
+
+export async function cleanupLegacyPaletteSettingsSafely(
+  cleanup: () => Promise<void> = cleanupLegacyPaletteSettings,
+  report: (error: unknown) => void = error => {
+    console.warn('KRL Helper: Obsolete palette settings could not be removed.', error);
+  }
+): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    report(error);
   }
 }
 
@@ -675,7 +706,7 @@ async function migrateLegacyPalettes(): Promise<void> {
     await configuration.update('palettes', migrated, vscode.ConfigurationTarget.Global);
   }
   if (configuredPalettes !== undefined || migrated) {
-    await cleanupLegacyPaletteSettings();
+    await cleanupLegacyPaletteSettingsSafely();
   }
 }
 
