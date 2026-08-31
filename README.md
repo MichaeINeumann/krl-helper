@@ -156,6 +156,10 @@ KRL Helper is maintained as a personal open-source project on a best-effort basi
 
 Issues and pull requests are welcome. Please use synthetic examples and do not submit customer, company, machine, production, or other confidential data.
 
+## Acknowledgements
+
+Developed with assistance from Claude and OpenAI Codex.
+
 ## License
 
 KRL Helper is available under the [MIT License](LICENSE).
