@@ -5,6 +5,7 @@
 ### Features
 
 - Direct hexadecimal color entry with validation and paste support in the KRL Helper settings editor
+- Dedicated dark and light syntax colors for `SIGNAL` declarations, including the keyword and declared signal name
 
 ### Fixes
 
