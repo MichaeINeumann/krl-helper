@@ -30,6 +30,20 @@ export const diagnosticSettingDefinitions = [
     label: 'Output alias prefixes',
     description: 'Aliases used inside $OUT[...] that must be declared in $config.dat.',
     defaultValue: ['o_']
+  },
+  {
+    key: 'inputSignalPrefixes',
+    fullKey: 'krlHelper.diagnostics.inputSignalPrefixes',
+    label: 'Input SIGNAL prefixes',
+    description: 'Variables backed by visible input SIGNAL declarations.',
+    defaultValue: ['di', 'ig_', 'GRP_SigIn_']
+  },
+  {
+    key: 'outputSignalPrefixes',
+    fullKey: 'krlHelper.diagnostics.outputSignalPrefixes',
+    label: 'Output SIGNAL prefixes',
+    description: 'Variables backed by visible output SIGNAL declarations.',
+    defaultValue: ['do', 'og_', 'GRP_SigOut_']
   }
 ] as const;
 
@@ -40,6 +54,8 @@ export interface DiagnosticPrefixConfiguration {
   globalVariablePrefixes: string[];
   inputAliasPrefixes: string[];
   outputAliasPrefixes: string[];
+  inputSignalPrefixes: string[];
+  outputSignalPrefixes: string[];
 }
 
 export type VariableScope = 'local' | 'global';
@@ -72,7 +88,9 @@ export function normalizePrefixConfiguration(
     localVariablePrefixes: normalizePrefixList(value.localVariablePrefixes),
     globalVariablePrefixes: normalizePrefixList(value.globalVariablePrefixes),
     inputAliasPrefixes: normalizePrefixList(value.inputAliasPrefixes),
-    outputAliasPrefixes: normalizePrefixList(value.outputAliasPrefixes)
+    outputAliasPrefixes: normalizePrefixList(value.outputAliasPrefixes),
+    inputSignalPrefixes: normalizePrefixList(value.inputSignalPrefixes),
+    outputSignalPrefixes: normalizePrefixList(value.outputSignalPrefixes)
   };
 }
 
@@ -106,7 +124,7 @@ export function classifyVariable(
 
 export function collectDeclarations(text: string, target: Set<string> = new Set<string>()): Set<string> {
   for (const declaration of parseKrlVariableDeclarations(text)) {
-    if (declaration.kind !== 'parameter') {
+    if (declaration.kind === 'declaration') {
       target.add(declaration.normalizedName);
     }
   }
@@ -122,12 +140,24 @@ export function collectFunctionParameters(text: string, target: Set<string> = ne
   return target;
 }
 
+export function collectSignalDeclarations(
+  text: string,
+  target: Set<string> = new Set<string>()
+): Set<string> {
+  for (const declaration of parseKrlVariableDeclarations(text)) {
+    if (declaration.kind === 'signal') {
+      target.add(declaration.normalizedName);
+    }
+  }
+  return target;
+}
+
 export function collectGlobalSourceDeclarations(
   text: string,
   target: Set<string> = new Set<string>()
 ): Set<string> {
   for (const declaration of parseKrlVariableDeclarations(text)) {
-    if (isExplicitProjectGlobalDeclaration(declaration)) {
+    if (isProjectGlobalDeclaration(declaration)) {
       target.add(declaration.normalizedName);
     }
   }
@@ -140,13 +170,18 @@ export function collectProjectDatDeclarations(
   target: Set<string> = new Set<string>()
 ): Set<string> {
   if (path.basename(filePath).toLowerCase() === '$config.dat') {
-    return collectDeclarations(text, target);
+    for (const declaration of parseKrlVariableDeclarations(text)) {
+      if (declaration.kind !== 'parameter') {
+        target.add(declaration.normalizedName);
+      }
+    }
+    return target;
   }
   if (!hasPublicDefdatHeader(text)) {
     return target;
   }
   for (const declaration of parseKrlVariableDeclarations(text)) {
-    if (isExplicitProjectGlobalDeclaration(declaration)) {
+    if (isProjectGlobalDeclaration(declaration)) {
       target.add(declaration.normalizedName);
     }
   }
@@ -157,6 +192,12 @@ export function isExplicitProjectGlobalDeclaration(
   declaration: ParsedKrlVariableDeclaration
 ): boolean {
   return declaration.kind === 'declaration' && declaration.global;
+}
+
+export function isProjectGlobalDeclaration(
+  declaration: ParsedKrlVariableDeclaration
+): boolean {
+  return declaration.kind === 'signal' || isExplicitProjectGlobalDeclaration(declaration);
 }
 
 export function hasPublicDefdatHeader(text: string): boolean {

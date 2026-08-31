@@ -40,6 +40,29 @@ suite('KRL variable parser', () => {
     );
   });
 
+  test('parses SIGNAL direction and scalar or ranged value semantics', () => {
+    const declarations = parseKrlVariableDeclarations([
+      'signal diEnabled $IN[1]',
+      'GLOBAL SIGNAL GRP_SigOut_1 $OUT[1]',
+      'SIGNAL ig_PGNO $IN[297] TO $IN[304]'
+    ].join('\n'));
+
+    assert.deepStrictEqual(
+      declarations.map(declaration => [
+        declaration.normalizedName,
+        declaration.kind,
+        declaration.global,
+        declaration.signalDirection,
+        declaration.signalType
+      ]),
+      [
+        ['dienabled', 'signal', false, 'input', 'BOOL'],
+        ['grp_sigout_1', 'signal', true, 'output', 'BOOL'],
+        ['ig_pgno', 'signal', false, 'input', 'INT']
+      ]
+    );
+  });
+
   test('does not parse GLOBAL type definitions as variables', () => {
     const declarations = parseKrlVariableDeclarations([
       'GLOBAL STRUC b_Status BOOL bReady',
