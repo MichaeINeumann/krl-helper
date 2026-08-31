@@ -48,6 +48,7 @@ const colorDefinitions: readonly ColorDefinition[] = [
   { label: 'DO keyword', key: 'doKeyword', scope: 'keyword.control.do.krl', darkFallback: '#FF8000', lightFallback: '#8A3B00' },
   { label: 'WAIT keyword', key: 'waitKeyword', scope: 'keyword.control.wait.krl', darkFallback: '#E8ED12', lightFallback: '#6E5700' },
   { label: 'Variable names', key: 'variableNames', scope: 'variable.other.user.krl', darkFallback: '#C0C0C0', lightFallback: '#001080' },
+  { label: 'SIGNAL declarations', key: 'signalDeclarations', scope: ['storage.type.signal.krl', 'variable.other.signal.declaration.krl'], darkFallback: '#66D9EF', lightFallback: '#00796B' },
   { label: 'Setup commands', key: 'setupCommands', scope: ['support.function.setup.krl', 'keyword.other.setup.krl', 'keyword.other.preprocessor.krl'], darkFallback: '#FFC042', lightFallback: '#830104' },
   { label: 'Motion commands', key: 'motionCommands', scope: ['keyword.control.motion.krl', 'constant.other.motion-blending.krl'], darkFallback: '#FF8000', lightFallback: '#B43A00' },
   { label: 'Math and functions', key: 'mathFunctions', scope: ['keyword.operator.logical.krl', 'support.function.math.krl'], darkFallback: '#FFC042', lightFallback: '#5757C8' },
@@ -90,6 +91,10 @@ export interface ThemePaletteTarget {
 
 interface PaletteConfiguration {
   update(section: string, value: unknown, target: vscode.ConfigurationTarget): Thenable<void>;
+}
+
+interface LegacyPaletteConfiguration extends PaletteConfiguration {
+  inspect<T>(section: string): { globalValue?: T } | undefined;
 }
 
 export interface PanelMessageTarget {
@@ -306,6 +311,16 @@ export async function persistPalettes(
     await configuration.update('palettes', palettes, vscode.ConfigurationTarget.Global);
   } catch {
     throw new PalettePersistenceError('The palettes could not be saved. No palette changes were applied.');
+  }
+}
+
+export async function cleanupLegacyPaletteSettings(
+  configuration: LegacyPaletteConfiguration = vscode.workspace.getConfiguration('krlHighlighting.palettes')
+): Promise<void> {
+  for (const palette of ['dark', 'light'] as const) {
+    if (configuration.inspect<unknown>(palette)?.globalValue !== undefined) {
+      await configuration.update(palette, undefined, vscode.ConfigurationTarget.Global);
+    }
   }
 }
 
@@ -643,8 +658,9 @@ export async function cleanLegacyWorkspaceHelperRules(): Promise<void> {
  */
 async function migrateLegacyPalettes(): Promise<void> {
   const configuration = vscode.workspace.getConfiguration('krlHighlighting');
+  const configuredPalettes = configuration.inspect<unknown>('palettes')?.globalValue;
   const migrated = paletteMigrationValue(
-    configuration.inspect<unknown>('palettes')?.globalValue,
+    configuredPalettes,
     legacyUserColors(),
     {
       dark: legacyStoredColors('dark'),
@@ -657,6 +673,9 @@ async function migrateLegacyPalettes(): Promise<void> {
   );
   if (migrated) {
     await configuration.update('palettes', migrated, vscode.ConfigurationTarget.Global);
+  }
+  if (configuredPalettes !== undefined || migrated) {
+    await cleanupLegacyPaletteSettings();
   }
 }
 

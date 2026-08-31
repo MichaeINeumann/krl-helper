@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
+  cleanupLegacyPaletteSettings,
   colorSettingsHtml,
   cleanLegacyWorkspaceHelperRules,
   CompletePalettes,
@@ -106,8 +107,8 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(helperForeground(lightAgain, '[Light Test Theme]', 'Regular text'), '#000000');
     assert.strictEqual(helperForeground(lightAgain, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
     assert.strictEqual(helperRulesAt(lightAgain).length, 0);
-    assert.strictEqual(helperRulesAt(lightAgain, '[Light Test Theme]').length, 22);
-    assert.strictEqual(helperRulesAt(lightAgain, '[Dark Test Theme]').length, 22);
+    assert.strictEqual(helperRulesAt(lightAgain, '[Light Test Theme]').length, 23);
+    assert.strictEqual(helperRulesAt(lightAgain, '[Dark Test Theme]').length, 23);
   });
 
   test('builds one deterministic customization containing all configured theme palettes', () => {
@@ -134,8 +135,8 @@ suite('KRL syntax color configuration', () => {
     const staleSecondWrite = updateCustomizationTargets({}, true, secondWindowTargets);
     const reconciled = updateCustomizationTargets(staleSecondWrite, true, firstWindowTargets);
 
-    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme][First Dark Theme]').length, 22);
-    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme][Second Dark Theme]').length, 22);
+    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme][First Dark Theme]').length, 23);
+    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme][Second Dark Theme]').length, 23);
     assert.deepStrictEqual(updateCustomizationTargets(reconciled, true, secondWindowTargets), reconciled);
   });
 
@@ -150,7 +151,7 @@ suite('KRL syntax color configuration', () => {
     ]);
 
     assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme]').length, 0);
-    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme][Dark Test Theme]').length, 22);
+    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme][Dark Test Theme]').length, 23);
     assert.strictEqual(helperRulesAt(updated, '[Other Theme][Other Theme]').length, 1);
   });
 
@@ -170,7 +171,7 @@ suite('KRL syntax color configuration', () => {
     const updated = updateCustomizationTargets({}, true, [{ selector: '', palette: 'dark' }]);
 
     assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), '#C0C0C0');
-    assert.strictEqual(helperRulesAt(updated).length, 22);
+    assert.strictEqual(helperRulesAt(updated).length, 23);
   });
 
   test('synchronizing the same theme repeatedly is idempotent', () => {
@@ -288,7 +289,7 @@ suite('KRL syntax color configuration', () => {
     const effectiveValue = { ...userValue, ...sharedOverride };
 
     assert.strictEqual(userSelector, '[Dark Test Theme][Dark Test Theme]');
-    assert.strictEqual(helperRulesAt(effectiveValue, userSelector).length, 22);
+    assert.strictEqual(helperRulesAt(effectiveValue, userSelector).length, 23);
     assert.deepStrictEqual(rulesAt(effectiveValue, exactSelector), [foreignRule]);
   });
 
@@ -360,6 +361,49 @@ suite('KRL syntax color configuration', () => {
       ),
       { dark: { comments: '#222222' }, light: {} }
     );
+  });
+
+  test('removes obsolete split palette settings without touching absent values', async () => {
+    const values: Record<string, unknown> = {
+      dark: { comments: '#111111' }
+    };
+    const updates: Array<{ section: string; value: unknown; target: vscode.ConfigurationTarget }> = [];
+    const configuration = {
+      inspect: <T>(section: string): { globalValue?: T } => ({
+        globalValue: values[section] as T | undefined
+      }),
+      update: async (
+        section: string,
+        value: unknown,
+        target: vscode.ConfigurationTarget
+      ): Promise<void> => {
+        updates.push({ section, value, target });
+      }
+    };
+
+    await cleanupLegacyPaletteSettings(configuration);
+
+    assert.deepStrictEqual(updates, [{
+      section: 'dark',
+      value: undefined,
+      target: vscode.ConfigurationTarget.Global
+    }]);
+  });
+
+  test('removes an obsolete split palette from VS Code User Settings', async () => {
+    const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
+    const previousDark = configuration.inspect<unknown>('dark')?.globalValue;
+
+    try {
+      await configuration.update('dark', { comments: '#111111' }, vscode.ConfigurationTarget.Global);
+      assert.deepStrictEqual(configuration.inspect<unknown>('dark')?.globalValue, { comments: '#111111' });
+
+      await cleanupLegacyPaletteSettings();
+
+      assert.strictEqual(configuration.inspect<unknown>('dark')?.globalValue, undefined);
+    } finally {
+      await configuration.update('dark', previousDark, vscode.ConfigurationTarget.Global);
+    }
   });
 
   test('reads only User values from deprecated per-color settings', async () => {
@@ -498,11 +542,14 @@ suite('KRL syntax color configuration', () => {
     const properties = extension.packageJSON.contributes.configuration.properties;
     assert.strictEqual(properties['krlHighlighting.palettes'].scope, 'application');
     assert.strictEqual(properties['krlHighlighting.applyCustomColors'].scope, 'application');
+    assert.ok(properties['krlHighlighting.palettes.dark'].deprecationMessage);
+    assert.ok(properties['krlHighlighting.palettes.light'].deprecationMessage);
     assert.ok(properties['krlHighlighting.colors.comments'].markdownDeprecationMessage);
     const paletteNamePattern = Object.keys(
       properties['krlHighlighting.palettes'].properties.dark.patternProperties
     )[0];
     assert.ok(new RegExp(paletteNamePattern).test('comments'));
+    assert.ok(new RegExp(paletteNamePattern).test('signalDeclarations'));
     assert.ok(!new RegExp(paletteNamePattern).test('comment'));
     assert.strictEqual(
       properties['krlHighlighting.palettes'].properties.dark.additionalProperties,
@@ -524,6 +571,8 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('data-color-input data-palette="dark" data-key="todoMarkers"'));
     assert.ok(html.includes('data-color-input data-palette="dark" data-key="foldStarts"'));
     assert.ok(html.includes('data-color-input data-palette="dark" data-key="foldEnds"'));
+    assert.ok(html.includes('data-color-input data-palette="dark" data-key="signalDeclarations" data-default="#66D9EF"'));
+    assert.ok(html.includes('data-color-input data-palette="light" data-key="signalDeclarations" data-default="#00796B"'));
     assert.ok(html.includes('Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.'));
     assert.ok(html.includes("event.data.type === 'saveError'"));
     assert.ok(html.includes("event.data.type === 'palettesState'"));
@@ -549,7 +598,7 @@ function completePalettes(color: string): { dark: Record<string, string>; light:
   const keys = [
     'normalText', 'comments', 'todoMarkers', 'foldStarts', 'foldEnds', 'blockComments', 'strings', 'numbers', 'programFlow',
     'controlStructures', 'ifKeyword', 'switchKeyword', 'doKeyword', 'waitKeyword',
-    'variableNames', 'setupCommands', 'motionCommands', 'mathFunctions', 'ioCommands',
+    'variableNames', 'signalDeclarations', 'setupCommands', 'motionCommands', 'mathFunctions', 'ioCommands',
     'typeDefinitions', 'systemVariables', 'listFunctions'
   ];
   const palette = (): Record<string, string> => Object.fromEntries(keys.map(key => [key, color]));
