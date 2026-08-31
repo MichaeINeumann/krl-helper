@@ -93,10 +93,6 @@ interface PaletteConfiguration {
   update(section: string, value: unknown, target: vscode.ConfigurationTarget): Thenable<void>;
 }
 
-interface LegacyPaletteConfiguration extends PaletteConfiguration {
-  inspect<T>(section: string): { globalValue?: T } | undefined;
-}
-
 export interface PanelMessageTarget {
   webview: {
     postMessage(message: unknown): Thenable<boolean>;
@@ -271,31 +267,13 @@ export function paletteMigrationValue(
   stored: StoredPalettes,
   formerSettings: StoredPalettes
 ): CompletePalettes | undefined {
-  const configured = paletteColors(configuredValue);
-  const hasFormerColors = Object.keys(validColors(formerSettings.dark)).length > 0
-    || Object.keys(validColors(formerSettings.light)).length > 0;
-  if (configuredValue !== undefined && !hasFormerColors) {
+  if (configuredValue !== undefined) {
     return undefined;
   }
   const migrated = mergeLegacyPaletteSources(nativeUserColors, stored, formerSettings);
-  if (configuredValue !== undefined) {
-    Object.assign(migrated.dark, configured.dark);
-    Object.assign(migrated.light, configured.light);
-  }
   return Object.keys(migrated.dark).length > 0 || Object.keys(migrated.light).length > 0
     ? migrated
     : undefined;
-}
-
-function paletteColors(value: unknown): CompletePalettes {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { dark: {}, light: {} };
-  }
-  const palettes = value as Record<string, unknown>;
-  return {
-    dark: validColors(palettes.dark),
-    light: validColors(palettes.light)
-  };
 }
 
 export function validateSubmittedPalettes(value: unknown): CompletePalettes | undefined {
@@ -329,29 +307,6 @@ export async function persistPalettes(
     await configuration.update('palettes', palettes, vscode.ConfigurationTarget.Global);
   } catch {
     throw new PalettePersistenceError('The palettes could not be saved. No palette changes were applied.');
-  }
-}
-
-export async function cleanupLegacyPaletteSettings(
-  configuration: LegacyPaletteConfiguration = vscode.workspace.getConfiguration('krlHighlighting.palettes')
-): Promise<void> {
-  for (const palette of ['dark', 'light'] as const) {
-    if (configuration.inspect<unknown>(palette)?.globalValue !== undefined) {
-      await configuration.update(palette, undefined, vscode.ConfigurationTarget.Global);
-    }
-  }
-}
-
-export async function cleanupLegacyPaletteSettingsSafely(
-  cleanup: () => Promise<void> = cleanupLegacyPaletteSettings,
-  report: (error: unknown) => void = error => {
-    console.warn('KRL Helper: Obsolete palette settings could not be removed.', error);
-  }
-): Promise<void> {
-  try {
-    await cleanup();
-  } catch (error) {
-    report(error);
   }
 }
 
@@ -689,9 +644,8 @@ export async function cleanLegacyWorkspaceHelperRules(): Promise<void> {
  */
 async function migrateLegacyPalettes(): Promise<void> {
   const configuration = vscode.workspace.getConfiguration('krlHighlighting');
-  const configuredPalettes = configuration.inspect<unknown>('palettes')?.globalValue;
   const migrated = paletteMigrationValue(
-    configuredPalettes,
+    configuration.inspect<unknown>('palettes')?.globalValue,
     legacyUserColors(),
     {
       dark: legacyStoredColors('dark'),
@@ -704,9 +658,6 @@ async function migrateLegacyPalettes(): Promise<void> {
   );
   if (migrated) {
     await configuration.update('palettes', migrated, vscode.ConfigurationTarget.Global);
-  }
-  if (configuredPalettes !== undefined || migrated) {
-    await cleanupLegacyPaletteSettingsSafely();
   }
 }
 
