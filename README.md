@@ -10,6 +10,7 @@ KRL Helper is a Visual Studio Code extension providing language support and prod
 - Document Outline, function hover, and **Go to Definition** for project routines and variables.
 - Conversion of selected `PTP`, `LIN`, `SPTP`, and `SLIN` motion blocks into iiQKA-style folds.
 - Line comments using `;`, including the standard VS Code **Toggle Line Comment** command and dedicated KRL Helper shortcuts.
+- Native TextMate highlighting for `TODO`, `;FOLD`, and `;ENDFOLD` markers inside semicolon comments.
 - Configurable diagnostics for local variables, global variables, and `$IN[...]` / `$OUT[...]` aliases.
 - Visibility-aware declaration indexing across module files, public DAT files, `$config.dat`, and global source declarations.
 
@@ -124,6 +125,8 @@ KRL permits the DAT forms `DECL GLOBAL <type>`, `GLOBAL DECL <type>`, and `GLOBA
 The diagnostics check declaration existence and visibility. They do not yet validate whether a prefix agrees with the declared KRL data type.
 
 `SIGNAL` declarations are treated as global variables. A single `$IN[...]` or `$OUT[...]` mapping has `BOOL` semantics; a mapping using `TO` has `INT` semantics. Signal prefixes are separate from `inputAliasPrefixes` and `outputAliasPrefixes`: aliases are names used inside `$IN[...]` or `$OUT[...]`, while signal prefixes identify variables declared by `SIGNAL`.
+
+Semicolon comments highlight whole-word `TODO` markers and line-leading `;FOLD` / `;ENDFOLD` boundaries with separate dark and light palette colors. The markers remain comments and do not affect diagnostics, folding behavior, or the fold-conversion command. Third-party editor decoration extensions can still override TextMate colors.
 
 ### Function and variable navigation
 

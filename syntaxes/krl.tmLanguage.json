@@ -24,8 +24,44 @@
       "patterns": [
         {
           "name": "comment.line.semicolon.krl",
+          "begin": "^[\\t ]*;[\\t ]*(?=(?i:FOLD)\\b)",
+          "end": "$",
+          "patterns": [
+            {
+              "name": "keyword.other.fold.start.krl",
+              "match": "(?i:\\bFOLD\\b)"
+            },
+            {
+              "name": "keyword.other.todo.krl",
+              "match": "(?i:\\bTODO\\b)"
+            }
+          ]
+        },
+        {
+          "name": "comment.line.semicolon.krl",
+          "begin": "^[\\t ]*;[\\t ]*(?=(?i:ENDFOLD)\\b)",
+          "end": "$",
+          "patterns": [
+            {
+              "name": "keyword.other.fold.end.krl",
+              "match": "(?i:\\bENDFOLD\\b)"
+            },
+            {
+              "name": "keyword.other.todo.krl",
+              "match": "(?i:\\bTODO\\b)"
+            }
+          ]
+        },
+        {
+          "name": "comment.line.semicolon.krl",
           "begin": ";",
-          "end": "$"
+          "end": "$",
+          "patterns": [
+            {
+              "name": "keyword.other.todo.krl",
+              "match": "(?i:\\bTODO\\b)"
+            }
+          ]
         },
         {
           "name": "comment.block.alternative.krl",
