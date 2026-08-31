@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
   cleanupLegacyPaletteSettings,
+  cleanupLegacyPaletteSettingsSafely,
   colorSettingsHtml,
   cleanLegacyWorkspaceHelperRules,
   CompletePalettes,
@@ -342,7 +343,7 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(migrated.light.comments, '#EEEEEE');
   });
 
-  test('uses the unified palette as a durable migration marker', () => {
+  test('uses the unified palette as a durable migration marker when no split settings remain', () => {
     assert.strictEqual(
       paletteMigrationValue(
         {},
@@ -360,6 +361,21 @@ suite('KRL syntax color configuration', () => {
         {}
       ),
       { dark: { comments: '#222222' }, light: {} }
+    );
+  });
+
+  test('preserves split palettes while keeping unified colors authoritative', () => {
+    assert.deepStrictEqual(
+      paletteMigrationValue(
+        { dark: { comments: '#444444', normalText: '#AAAAAA' } },
+        {},
+        {},
+        { dark: { comments: '#222222', numbers: '#333333' } }
+      ),
+      {
+        dark: { comments: '#444444', numbers: '#333333', normalText: '#AAAAAA' },
+        light: {}
+      }
     );
   });
 
@@ -390,6 +406,18 @@ suite('KRL syntax color configuration', () => {
     }]);
   });
 
+  test('reports legacy cleanup failures without rejecting initialization', async () => {
+    const failure = new Error('synthetic cleanup failure');
+    let reported: unknown;
+
+    await cleanupLegacyPaletteSettingsSafely(
+      async () => { throw failure; },
+      error => { reported = error; }
+    );
+
+    assert.strictEqual(reported, failure);
+  });
+
   test('removes an obsolete split palette from VS Code User Settings', async () => {
     const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
     const previousDark = configuration.inspect<unknown>('dark')?.globalValue;
@@ -397,6 +425,10 @@ suite('KRL syntax color configuration', () => {
     try {
       await configuration.update('dark', { comments: '#111111' }, vscode.ConfigurationTarget.Global);
       assert.deepStrictEqual(configuration.inspect<unknown>('dark')?.globalValue, { comments: '#111111' });
+      assert.deepStrictEqual(
+        vscode.workspace.getConfiguration('krlHighlighting').inspect<unknown>('palettes')?.globalValue,
+        { dark: { comments: '#111111' } }
+      );
 
       await cleanupLegacyPaletteSettings();
 
