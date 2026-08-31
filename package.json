@@ -298,7 +298,7 @@
             "dark": {
               "type": "object",
               "patternProperties": {
-                "^(?:normalText|comments|todoMarkers|foldStarts|foldEnds|blockComments|strings|numbers|programFlow|controlStructures|ifKeyword|switchKeyword|doKeyword|waitKeyword|variableNames|setupCommands|motionCommands|mathFunctions|ioCommands|typeDefinitions|systemVariables|listFunctions)$": {
+                "^(?:normalText|comments|todoMarkers|foldStarts|foldEnds|blockComments|strings|numbers|programFlow|controlStructures|ifKeyword|switchKeyword|doKeyword|waitKeyword|variableNames|signalDeclarations|setupCommands|motionCommands|mathFunctions|ioCommands|typeDefinitions|systemVariables|listFunctions)$": {
                   "type": "string",
                   "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
                 }
@@ -308,7 +308,7 @@
             "light": {
               "type": "object",
               "patternProperties": {
-                "^(?:normalText|comments|todoMarkers|foldStarts|foldEnds|blockComments|strings|numbers|programFlow|controlStructures|ifKeyword|switchKeyword|doKeyword|waitKeyword|variableNames|setupCommands|motionCommands|mathFunctions|ioCommands|typeDefinitions|systemVariables|listFunctions)$": {
+                "^(?:normalText|comments|todoMarkers|foldStarts|foldEnds|blockComments|strings|numbers|programFlow|controlStructures|ifKeyword|switchKeyword|doKeyword|waitKeyword|variableNames|signalDeclarations|setupCommands|motionCommands|mathFunctions|ioCommands|typeDefinitions|systemVariables|listFunctions)$": {
                   "type": "string",
                   "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
                 }
@@ -318,6 +318,20 @@
           },
           "additionalProperties": false,
           "description": "Update-stable dark and light syntax palettes saved atomically by KRL Helper: Open Settings."
+        },
+        "krlHighlighting.palettes.dark": {
+          "type": "object",
+          "scope": "application",
+          "order": 30,
+          "description": "Obsolete dark palette retained only so KRL Helper can remove the historical setting.",
+          "deprecationMessage": "Deprecated: migrated into krlHighlighting.palettes and removed automatically."
+        },
+        "krlHighlighting.palettes.light": {
+          "type": "object",
+          "scope": "application",
+          "order": 31,
+          "description": "Obsolete light palette retained only so KRL Helper can remove the historical setting.",
+          "deprecationMessage": "Deprecated: migrated into krlHighlighting.palettes and removed automatically."
         },
         "krlHelper.diagnostics.localVariablePrefixes": {
           "type": "array",

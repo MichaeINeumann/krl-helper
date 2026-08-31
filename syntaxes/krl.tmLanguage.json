@@ -6,6 +6,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#signalDeclarations" },
     { "include": "#systemVariables" },
     { "include": "#numbers" },
     { "include": "#individualKeywords" },
@@ -20,6 +21,18 @@
     { "include": "#variables" }
   ],
   "repository": {
+    "signalDeclarations": {
+      "patterns": [
+        {
+          "name": "meta.declaration.signal.krl",
+          "match": "(?i:\\b(SIGNAL)\\s+([A-Za-z_][A-Za-z0-9_]*))",
+          "captures": {
+            "1": { "name": "storage.type.signal.krl" },
+            "2": { "name": "variable.other.signal.declaration.krl" }
+          }
+        }
+      ]
+    },
     "comments": {
       "patterns": [
         {
@@ -209,7 +222,7 @@
       "patterns": [
         {
           "name": "storage.type.krl",
-          "match": "(?i:\\b(?:BOOL|CHAR|INT|REAL|ENUM|STRUC|SIGNAL|FRAME|POS|E6POS|AXIS|E6AXIS|FDAT|LDAT|PDAT|CPDAT|APO|TOOL|BASE)\\b)"
+          "match": "(?i:\\b(?:BOOL|CHAR|INT|REAL|ENUM|STRUC|FRAME|POS|E6POS|AXIS|E6AXIS|FDAT|LDAT|PDAT|CPDAT|APO|TOOL|BASE)\\b)"
         }
       ]
     },

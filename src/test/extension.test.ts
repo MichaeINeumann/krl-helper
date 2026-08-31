@@ -57,6 +57,35 @@ suite('KRL Helper', () => {
     assert.ok(commentPatterns[1].patterns?.some(pattern => pattern.name === 'keyword.other.todo.krl'));
   });
 
+  test('declares dedicated SIGNAL keyword and declaration-name scopes', async () => {
+    const extension = vscode.extensions.getExtension('MichaeINeumann.krl-helper');
+    assert.ok(extension);
+    const contents = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(
+      extension.extensionUri,
+      'syntaxes',
+      'krl.tmLanguage.json'
+    ));
+    const grammar = JSON.parse(Buffer.from(contents).toString('utf8')) as {
+      patterns?: Array<{ include?: string }>;
+      repository?: {
+        signalDeclarations?: {
+          patterns?: Array<{
+            match?: string;
+            captures?: Record<string, { name?: string }>;
+          }>;
+        };
+        typeDefinitions?: { patterns?: Array<{ match?: string }> };
+      };
+    };
+    const signalPattern = grammar.repository?.signalDeclarations?.patterns?.[0];
+
+    assert.ok(grammar.patterns?.some(pattern => pattern.include === '#signalDeclarations'));
+    assert.strictEqual(signalPattern?.captures?.['1']?.name, 'storage.type.signal.krl');
+    assert.strictEqual(signalPattern?.captures?.['2']?.name, 'variable.other.signal.declaration.krl');
+    assert.ok(signalPattern?.match?.includes('(SIGNAL)'));
+    assert.ok(!grammar.repository?.typeDefinitions?.patterns?.[0]?.match?.includes('SIGNAL'));
+  });
+
   test('dedicated KRL shortcut command toggles selected lines', async () => {
     const document = await vscode.workspace.openTextDocument({
       language: 'krl',
