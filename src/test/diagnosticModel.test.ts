@@ -5,6 +5,7 @@ import {
   collectFunctionParameters,
   collectGlobalSourceDeclarations,
   collectProjectDatDeclarations,
+  collectSignalDeclarations,
   DiagnosticPrefixConfiguration,
   hasLiteralPrefix,
   normalizePrefixList
@@ -14,7 +15,9 @@ const defaults: DiagnosticPrefixConfiguration = {
   localVariablePrefixes: ['b', 'n'],
   globalVariablePrefixes: ['b_', 'n_'],
   inputAliasPrefixes: ['i_'],
-  outputAliasPrefixes: ['o_']
+  outputAliasPrefixes: ['o_'],
+  inputSignalPrefixes: ['di', 'ig_', 'GRP_SigIn_'],
+  outputSignalPrefixes: ['do', 'og_', 'GRP_SigOut_']
 };
 
 suite('KRL diagnostic model', () => {
@@ -93,5 +96,30 @@ suite('KRL diagnostic model', () => {
     ].join('\n'));
 
     assert.deepStrictEqual([...names].sort(), ['b_visible', 'n_alsovisible']);
+  });
+
+  test('treats SIGNAL declarations as project-global names', () => {
+    const names = collectGlobalSourceDeclarations([
+      'SIGNAL diEnabled $IN[1]',
+      'GLOBAL SIGNAL og_Ready $OUT[2]'
+    ].join('\n'));
+    const configNames = collectSignalDeclarations('SIGNAL ig_Value $IN[3] TO $IN[6]');
+
+    assert.deepStrictEqual([...names].sort(), ['dienabled', 'og_ready']);
+    assert.deepStrictEqual([...configNames], ['ig_value']);
+  });
+
+  test('keeps SIGNAL visibility constrained by public DAT rules', () => {
+    const publicNames = collectProjectDatDeclarations(
+      '/project/shared.dat',
+      'DEFDAT Shared PUBLIC\nSIGNAL diVisible $IN[1]\n'
+    );
+    const privateNames = collectProjectDatDeclarations(
+      '/project/private.dat',
+      'DEFDAT Private\nSIGNAL diHidden $IN[2]\n'
+    );
+
+    assert.deepStrictEqual([...publicNames], ['divisible']);
+    assert.deepStrictEqual([...privateNames], []);
   });
 });

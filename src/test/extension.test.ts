@@ -81,6 +81,42 @@ suite('KRL Helper', () => {
     }
   });
 
+  test('diagnoses and navigates SIGNAL-backed variables', async () => {
+    const fileName = `krl-helper-signals-${Date.now()}.src`;
+    const uri = vscode.Uri.file(path.join(os.tmpdir(), fileName));
+    await vscode.workspace.fs.writeFile(uri, Buffer.from([
+      'SIGNAL diReady $IN[1]',
+      'SIGNAL n_GlobalStatus $IN[10] TO $IN[15]',
+      'GLOBAL BOOL diOrdinary',
+      'DEF SignalTest()',
+      '  diMissing = FALSE',
+      '  diReady = TRUE',
+      '  diOrdinary = TRUE',
+      '  n_GlobalStatus = n_GlobalStatus B_AND 16#00FF',
+      'END',
+      ''
+    ].join('\n')));
+
+    try {
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      const diagnostics = await waitForDiagnostics(uri);
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'diMissing'")));
+      assert.ok(diagnostics.some(diagnostic => diagnostic.message.includes("'diOrdinary'")));
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'diReady'")));
+      assert.ok(!diagnostics.some(diagnostic => diagnostic.message.includes("'n_GlobalStatus'")));
+
+      const position = document.positionAt(document.getText().lastIndexOf('diReady'));
+      const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', uri, position
+      );
+      assert.ok(definitions.some(definition => definition.range.start.line === 0));
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await vscode.workspace.fs.delete(uri, { useTrash: false });
+    }
+  });
+
   test('updates open-document diagnostics when prefix configuration changes', async () => {
     const configuration = vscode.workspace.getConfiguration('krlHelper.diagnostics');
     const fileName = `krl-helper-diagnostics-config-${Date.now()}.src`;

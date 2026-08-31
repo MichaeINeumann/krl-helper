@@ -368,6 +368,34 @@
           "scope": "window",
           "order": 103,
           "description": "Literal prefixes for $OUT aliases that must be declared in $config.dat. Prefix matching is case-insensitive."
+        },
+        "krlHelper.diagnostics.inputSignalPrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "di",
+            "ig_",
+            "GRP_SigIn_"
+          ],
+          "scope": "window",
+          "order": 104,
+          "description": "Literal prefixes for variables backed by visible input SIGNAL declarations. Prefix matching is case-insensitive."
+        },
+        "krlHelper.diagnostics.outputSignalPrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "do",
+            "og_",
+            "GRP_SigOut_"
+          ],
+          "scope": "window",
+          "order": 105,
+          "description": "Literal prefixes for variables backed by visible output SIGNAL declarations. Prefix matching is case-insensitive."
         }
       }
     }

@@ -8,6 +8,7 @@ import {
   diagnosticSettingDefinitions,
   hasPublicDefdatHeader,
   isExplicitProjectGlobalDeclaration,
+  isProjectGlobalDeclaration,
   normalizePrefixConfiguration
 } from './diagnosticModel';
 import {
@@ -252,15 +253,18 @@ function selectGlobalDefinitions(
   const nearestConfigId = selectNearestConfigId(currentUri, configDefinitions);
   return definitions.filter(definition => {
     if (definition.fileKind === 'source') {
-      return isExplicitProjectGlobalDeclaration(definition);
+      return isProjectGlobalDeclaration(definition);
     }
     if (definition.fileKind !== 'dat') {
       return false;
     }
+    if (definition.kind === 'signal' && isCompanionDefinition(currentUri, definition)) {
+      return true;
+    }
     if (definition.configDat) {
       return nearestConfigId !== undefined && definition.sourceId === nearestConfigId;
     }
-    return definition.publicDat && isExplicitProjectGlobalDeclaration(definition);
+    return definition.publicDat && isProjectGlobalDeclaration(definition);
   });
 }
 

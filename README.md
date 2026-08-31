@@ -98,7 +98,7 @@ The following settings are deprecated. Their values are migrated once into `krlH
 
 ### Diagnostics
 
-The Diagnostics tab and native VS Code Settings expose four array settings:
+The Diagnostics tab and native VS Code Settings expose six array settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -106,6 +106,8 @@ The Diagnostics tab and native VS Code Settings expose four array settings:
 | `krlHelper.diagnostics.globalVariablePrefixes` | `["b_", "n_"]` | Variables that require a global declaration |
 | `krlHelper.diagnostics.inputAliasPrefixes` | `["i_"]` | `$IN[...]` aliases that must exist in `$config.dat` |
 | `krlHelper.diagnostics.outputAliasPrefixes` | `["o_"]` | `$OUT[...]` aliases that must exist in `$config.dat` |
+| `krlHelper.diagnostics.inputSignalPrefixes` | `["di", "ig_", "GRP_SigIn_"]` | Variables that must resolve to visible input `SIGNAL` declarations |
+| `krlHelper.diagnostics.outputSignalPrefixes` | `["do", "og_", "GRP_SigOut_"]` | Variables that must resolve to visible output `SIGNAL` declarations |
 
 Each Diagnostics field can be edited at **User** or **Workspace** scope. Workspace overrides take precedence; inherited values are marked in the editor. **Reset** removes only the selected scope's override. Prefixes are trimmed, deduplicated case-insensitively, and matched literally. An empty list disables that check.
 
@@ -121,11 +123,13 @@ KRL permits the DAT forms `DECL GLOBAL <type>`, `GLOBAL DECL <type>`, and `GLOBA
 
 The diagnostics check declaration existence and visibility. They do not yet validate whether a prefix agrees with the declared KRL data type.
 
+`SIGNAL` declarations are treated as global variables. A single `$IN[...]` or `$OUT[...]` mapping has `BOOL` semantics; a mapping using `TO` has `INT` semantics. Signal prefixes are separate from `inputAliasPrefixes` and `outputAliasPrefixes`: aliases are names used inside `$IN[...]` or `$OUT[...]`, while signal prefixes identify variables declared by `SIGNAL`.
+
 ### Function and variable navigation
 
 Function lookup is case-insensitive and supports `DEF`, `GLOBAL DEF`, `DEFFCT`, and `GLOBAL DEFFCT`. All functions in the current document are visible. From another `.src` or `.sub`, explicit global routines and the module entry routine whose name matches the source filename are visible. Other local helper routines remain private. Comments, known KRL built-ins, and unresolved calls produce no navigation result.
 
-Variable **Go to Definition** uses the same visibility rules as diagnostics: current source declarations and parameters, the same-named companion DAT, `$config.dat`, public DAT declarations with an explicit `GLOBAL` modifier, and explicit global source declarations. Local-prefixed variables fall back to a visible project global only when no valid local declaration exists; prefix-classified global variables never fall back to a same-named local declaration. For individually opened files below a `KRC/R1` tree, navigation infers that tree as the project root. Both project indexes use unsaved open documents and refresh after file, editor, configuration, and workspace changes.
+Variable **Go to Definition** uses the same visibility rules as diagnostics: current source declarations and parameters, the same-named companion DAT, `$config.dat`, visible SIGNAL declarations, public DAT declarations with an explicit `GLOBAL` modifier, and explicit global source declarations. Local-prefixed variables fall back to a visible project global only when no valid local declaration exists; prefix-classified global variables never fall back to a same-named local declaration. For individually opened files below a `KRC/R1` tree, navigation infers that tree as the project root. Both project indexes use unsaved open documents and refresh after file, editor, configuration, and workspace changes.
 
 ## Limitations
 

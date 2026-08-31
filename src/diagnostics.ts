@@ -8,8 +8,10 @@ import {
   collectFunctionParameters,
   collectGlobalSourceDeclarations,
   collectProjectDatDeclarations,
+  collectSignalDeclarations,
   DiagnosticPrefixConfiguration,
   diagnosticSettingDefinitions,
+  hasPublicDefdatHeader,
   matchesAnyPrefix,
   normalizePrefixConfiguration
 } from './diagnosticModel';
@@ -35,6 +37,7 @@ interface WorkspaceScan {
 
 interface ProjectDeclarationIndex {
   names: Set<string>;
+  signalNames: Set<string>;
   files: string[];
 }
 
@@ -179,24 +182,31 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
   const sourceText = document.getText();
   const localNames = new Set<string>();
   const globalNames = new Set<string>();
+  const signalNames = new Set<string>();
   const explicitGlobalNames = new Set<string>();
   const companionDat = findCompanionDat(sourcePath);
   if (companionDat) {
     const datText = await readProjectFileText(companionDat);
     if (datText) {
       collectDeclarations(datText, localNames);
+      collectSignalDeclarations(datText, explicitGlobalNames);
+      collectSignalDeclarations(datText, signalNames);
       collectProjectDatDeclarations(companionDat, datText, explicitGlobalNames);
     }
   }
   collectDeclarations(sourceText, localNames);
   collectFunctionParameters(sourceText, localNames);
   collectGlobalSourceDeclarations(sourceText, explicitGlobalNames);
+  collectSignalDeclarations(sourceText, signalNames);
 
   const declarationRoot = findDeclarationProjectRoot(sourcePath, document);
   if (declarationRoot) {
     const projectDeclarations = await getProjectDeclarations(declarationRoot);
     for (const name of projectDeclarations.names) {
       explicitGlobalNames.add(name);
+    }
+    for (const name of projectDeclarations.signalNames) {
+      signalNames.add(name);
     }
   }
 
@@ -213,6 +223,7 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
     const configText = await readProjectFileText(configDat);
     if (configText) {
       collectDeclarations(configText, globalNames);
+      collectSignalDeclarations(configText, signalNames);
     }
   }
 
@@ -226,6 +237,7 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
       localNames,
       globalNames,
       explicitGlobalNames,
+      signalNames,
       prefixConfiguration
     )
   ];
@@ -416,6 +428,7 @@ async function getProjectDeclarations(root: string): Promise<ProjectDeclarationI
 
 async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclarationIndex> {
   const names = new Set<string>();
+  const signalNames = new Set<string>();
   const files = await scanProjectDeclarationFiles(root);
   for (const filePath of files) {
     const text = await readProjectFileText(filePath);
@@ -426,12 +439,16 @@ async function buildProjectDeclarationIndex(root: string): Promise<ProjectDeclar
     if (extension === '.dat') {
       if (path.basename(filePath).toLowerCase() !== '$config.dat') {
         collectProjectDatDeclarations(filePath, text, names);
+        if (hasPublicDefdatHeader(text)) {
+          collectSignalDeclarations(text, signalNames);
+        }
       }
     } else {
       collectGlobalSourceDeclarations(text, names);
+      collectSignalDeclarations(text, signalNames);
     }
   }
-  return { names, files };
+  return { names, signalNames, files };
 }
 
 async function scanProjectDeclarationFiles(root: string): Promise<string[]> {
@@ -539,6 +556,7 @@ function findUndeclaredDiagnostics(
   localNames: Set<string>,
   globalNames: Set<string>,
   explicitGlobalNames: Set<string>,
+  signalNames: Set<string>,
   configuration: DiagnosticPrefixConfiguration
 ): vscode.Diagnostic[] {
   const diagnostics: vscode.Diagnostic[] = [];
@@ -548,6 +566,8 @@ function findUndeclaredDiagnostics(
     const identifier = match[0];
     const normalized = identifier.toLowerCase();
     const scope = classifyVariable(identifier, configuration);
+    const signalCandidate = matchesAnyPrefix(identifier, configuration.inputSignalPrefixes)
+      || matchesAnyPrefix(identifier, configuration.outputSignalPrefixes);
     if (hasNonVariablePrefix(text, match.index) || isMemberAccess(text, match.index)
         || isConfiguredIoAliasOperand(
           text,
@@ -556,16 +576,20 @@ function findUndeclaredDiagnostics(
           identifier,
           configuration
         )
-        || isFunctionIdentifier(text, match.index + identifier.length) || !scope) {
+        || isFunctionIdentifier(text, match.index + identifier.length) || (!scope && !signalCandidate)) {
       continue;
     }
-    const declared = scope === 'global'
+    const declared = signalCandidate
+      ? signalNames.has(normalized)
+      : scope === 'global'
       ? globalNames.has(normalized)
       : localNames.has(normalized) || explicitGlobalNames.has(normalized);
     if (ignoredIdentifiers.has(normalized) || declared) {
       continue;
     }
-    const declarationSpace = scope === 'global'
+    const declarationSpace = signalCandidate && !scope
+      ? 'visible SIGNAL declarations'
+      : scope === 'global'
       ? 'global project declarations'
       : 'the current module or visible project globals';
     diagnostics.push(new vscode.Diagnostic(

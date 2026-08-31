@@ -12,6 +12,8 @@ export interface ParsedKrlVariableDeclaration {
   lineStartOffset: number;
   nameStartOffset: number;
   nameEndOffset: number;
+  signalDirection?: 'input' | 'output';
+  signalType?: 'BOOL' | 'INT';
 }
 
 export interface KrlVariableReference {
@@ -104,10 +106,19 @@ function parseVariableLine(
   lineNumber: number,
   lineStartOffset: number
 ): ParsedKrlVariableDeclaration[] {
-  const signal = /^\s*SIGNAL\s+([A-Za-z_][A-Za-z0-9_]*)\b/i.exec(line);
+  const signal = /^\s*(?:(GLOBAL)\s+)?SIGNAL\s+([A-Za-z_][A-Za-z0-9_]*)\b/i.exec(line);
   if (signal) {
-    const nameOffset = signal.index + signal[0].lastIndexOf(signal[1]);
-    return [createDeclaration(signal[1], 'signal', false, lineNumber, lineStartOffset, nameOffset)];
+    const name = signal[2];
+    const nameOffset = signal.index + signal[0].lastIndexOf(name);
+    const mapping = /\$(IN|OUT)\s*\[[^\]]+\](?:\s+TO\s+\$(?:IN|OUT)\s*\[[^\]]+\])?/i.exec(
+      line.slice(signal.index + signal[0].length)
+    );
+    const range = mapping ? /\bTO\b/i.test(mapping[0]) : false;
+    const direction = mapping?.[1].toLowerCase() === 'out' ? 'output' : 'input';
+    return [createDeclaration(
+      name, 'signal', Boolean(signal[1]), lineNumber, lineStartOffset, nameOffset,
+      mapping ? direction : undefined, mapping ? range ? 'INT' : 'BOOL' : undefined
+    )];
   }
 
   const prefix = /^\s*(?:(DECL)\s+(?:(GLOBAL)\s+)?|(GLOBAL)\s+(?:(DECL)\s+)?)/i.exec(line);
@@ -192,7 +203,9 @@ function createDeclaration(
   global: boolean,
   line: number,
   lineStartOffset: number,
-  nameOffsetInLine: number
+  nameOffsetInLine: number,
+  signalDirection?: 'input' | 'output',
+  signalType?: 'BOOL' | 'INT'
 ): ParsedKrlVariableDeclaration {
   const nameStartOffset = lineStartOffset + nameOffsetInLine;
   return {
@@ -203,7 +216,9 @@ function createDeclaration(
     line,
     lineStartOffset,
     nameStartOffset,
-    nameEndOffset: nameStartOffset + name.length
+    nameEndOffset: nameStartOffset + name.length,
+    signalDirection,
+    signalType
   };
 }
 
