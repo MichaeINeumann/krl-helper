@@ -319,20 +319,6 @@
           "additionalProperties": false,
           "description": "Update-stable dark and light syntax palettes saved atomically by KRL Helper: Open Settings."
         },
-        "krlHighlighting.palettes.dark": {
-          "type": "object",
-          "scope": "application",
-          "order": 30,
-          "description": "Obsolete dark palette retained only so KRL Helper can remove the historical setting.",
-          "deprecationMessage": "Deprecated: migrated into krlHighlighting.palettes and removed automatically."
-        },
-        "krlHighlighting.palettes.light": {
-          "type": "object",
-          "scope": "application",
-          "order": 31,
-          "description": "Obsolete light palette retained only so KRL Helper can remove the historical setting.",
-          "deprecationMessage": "Deprecated: migrated into krlHighlighting.palettes and removed automatically."
-        },
         "krlHelper.diagnostics.localVariablePrefixes": {
           "type": "array",
           "items": {

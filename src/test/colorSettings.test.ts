@@ -1,8 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import {
-  cleanupLegacyPaletteSettings,
-  cleanupLegacyPaletteSettingsSafely,
   colorSettingsHtml,
   cleanLegacyWorkspaceHelperRules,
   CompletePalettes,
@@ -343,7 +341,7 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(migrated.light.comments, '#EEEEEE');
   });
 
-  test('uses the unified palette as a durable migration marker when no split settings remain', () => {
+  test('uses the unified palette as a durable migration marker', () => {
     assert.strictEqual(
       paletteMigrationValue(
         {},
@@ -362,80 +360,6 @@ suite('KRL syntax color configuration', () => {
       ),
       { dark: { comments: '#222222' }, light: {} }
     );
-  });
-
-  test('preserves split palettes while keeping unified colors authoritative', () => {
-    assert.deepStrictEqual(
-      paletteMigrationValue(
-        { dark: { comments: '#444444', normalText: '#AAAAAA' } },
-        {},
-        {},
-        { dark: { comments: '#222222', numbers: '#333333' } }
-      ),
-      {
-        dark: { comments: '#444444', numbers: '#333333', normalText: '#AAAAAA' },
-        light: {}
-      }
-    );
-  });
-
-  test('removes obsolete split palette settings without touching absent values', async () => {
-    const values: Record<string, unknown> = {
-      dark: { comments: '#111111' }
-    };
-    const updates: Array<{ section: string; value: unknown; target: vscode.ConfigurationTarget }> = [];
-    const configuration = {
-      inspect: <T>(section: string): { globalValue?: T } => ({
-        globalValue: values[section] as T | undefined
-      }),
-      update: async (
-        section: string,
-        value: unknown,
-        target: vscode.ConfigurationTarget
-      ): Promise<void> => {
-        updates.push({ section, value, target });
-      }
-    };
-
-    await cleanupLegacyPaletteSettings(configuration);
-
-    assert.deepStrictEqual(updates, [{
-      section: 'dark',
-      value: undefined,
-      target: vscode.ConfigurationTarget.Global
-    }]);
-  });
-
-  test('reports legacy cleanup failures without rejecting initialization', async () => {
-    const failure = new Error('synthetic cleanup failure');
-    let reported: unknown;
-
-    await cleanupLegacyPaletteSettingsSafely(
-      async () => { throw failure; },
-      error => { reported = error; }
-    );
-
-    assert.strictEqual(reported, failure);
-  });
-
-  test('removes an obsolete split palette from VS Code User Settings', async () => {
-    const configuration = vscode.workspace.getConfiguration('krlHighlighting.palettes');
-    const previousDark = configuration.inspect<unknown>('dark')?.globalValue;
-
-    try {
-      await configuration.update('dark', { comments: '#111111' }, vscode.ConfigurationTarget.Global);
-      assert.deepStrictEqual(configuration.inspect<unknown>('dark')?.globalValue, { comments: '#111111' });
-      assert.deepStrictEqual(
-        vscode.workspace.getConfiguration('krlHighlighting').inspect<unknown>('palettes')?.globalValue,
-        { dark: { comments: '#111111' } }
-      );
-
-      await cleanupLegacyPaletteSettings();
-
-      assert.strictEqual(configuration.inspect<unknown>('dark')?.globalValue, undefined);
-    } finally {
-      await configuration.update('dark', previousDark, vscode.ConfigurationTarget.Global);
-    }
   });
 
   test('reads only User values from deprecated per-color settings', async () => {
@@ -574,8 +498,6 @@ suite('KRL syntax color configuration', () => {
     const properties = extension.packageJSON.contributes.configuration.properties;
     assert.strictEqual(properties['krlHighlighting.palettes'].scope, 'application');
     assert.strictEqual(properties['krlHighlighting.applyCustomColors'].scope, 'application');
-    assert.ok(properties['krlHighlighting.palettes.dark'].deprecationMessage);
-    assert.ok(properties['krlHighlighting.palettes.light'].deprecationMessage);
     assert.ok(properties['krlHighlighting.colors.comments'].markdownDeprecationMessage);
     const paletteNamePattern = Object.keys(
       properties['krlHighlighting.palettes'].properties.dark.patternProperties
