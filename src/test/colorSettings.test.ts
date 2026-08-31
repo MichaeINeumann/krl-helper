@@ -106,8 +106,8 @@ suite('KRL syntax color configuration', () => {
     assert.strictEqual(helperForeground(lightAgain, '[Light Test Theme]', 'Regular text'), '#000000');
     assert.strictEqual(helperForeground(lightAgain, '[Dark Test Theme]', 'Regular text'), '#C0C0C0');
     assert.strictEqual(helperRulesAt(lightAgain).length, 0);
-    assert.strictEqual(helperRulesAt(lightAgain, '[Light Test Theme]').length, 19);
-    assert.strictEqual(helperRulesAt(lightAgain, '[Dark Test Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(lightAgain, '[Light Test Theme]').length, 22);
+    assert.strictEqual(helperRulesAt(lightAgain, '[Dark Test Theme]').length, 22);
   });
 
   test('builds one deterministic customization containing all configured theme palettes', () => {
@@ -134,8 +134,8 @@ suite('KRL syntax color configuration', () => {
     const staleSecondWrite = updateCustomizationTargets({}, true, secondWindowTargets);
     const reconciled = updateCustomizationTargets(staleSecondWrite, true, firstWindowTargets);
 
-    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme][First Dark Theme]').length, 19);
-    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme][Second Dark Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(reconciled, '[First Dark Theme][First Dark Theme]').length, 22);
+    assert.strictEqual(helperRulesAt(reconciled, '[Second Dark Theme][Second Dark Theme]').length, 22);
     assert.deepStrictEqual(updateCustomizationTargets(reconciled, true, secondWindowTargets), reconciled);
   });
 
@@ -150,7 +150,7 @@ suite('KRL syntax color configuration', () => {
     ]);
 
     assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme]').length, 0);
-    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme][Dark Test Theme]').length, 19);
+    assert.strictEqual(helperRulesAt(updated, '[Dark Test Theme][Dark Test Theme]').length, 22);
     assert.strictEqual(helperRulesAt(updated, '[Other Theme][Other Theme]').length, 1);
   });
 
@@ -170,7 +170,7 @@ suite('KRL syntax color configuration', () => {
     const updated = updateCustomizationTargets({}, true, [{ selector: '', palette: 'dark' }]);
 
     assert.strictEqual(helperForeground(updated, undefined, 'Regular text'), '#C0C0C0');
-    assert.strictEqual(helperRulesAt(updated).length, 19);
+    assert.strictEqual(helperRulesAt(updated).length, 22);
   });
 
   test('synchronizing the same theme repeatedly is idempotent', () => {
@@ -288,7 +288,7 @@ suite('KRL syntax color configuration', () => {
     const effectiveValue = { ...userValue, ...sharedOverride };
 
     assert.strictEqual(userSelector, '[Dark Test Theme][Dark Test Theme]');
-    assert.strictEqual(helperRulesAt(effectiveValue, userSelector).length, 19);
+    assert.strictEqual(helperRulesAt(effectiveValue, userSelector).length, 22);
     assert.deepStrictEqual(rulesAt(effectiveValue, exactSelector), [foreignRule]);
   });
 
@@ -521,6 +521,9 @@ suite('KRL syntax color configuration', () => {
     assert.ok(html.includes('data-color-picker data-palette="dark" data-key="normalText"'));
     assert.ok(html.includes('data-color-input data-palette="dark" data-key="normalText" data-default="#C0C0C0"'));
     assert.ok(html.includes('data-color-input data-palette="light" data-key="normalText" data-default="#000000"'));
+    assert.ok(html.includes('data-color-input data-palette="dark" data-key="todoMarkers"'));
+    assert.ok(html.includes('data-color-input data-palette="dark" data-key="foldStarts"'));
+    assert.ok(html.includes('data-color-input data-palette="dark" data-key="foldEnds"'));
     assert.ok(html.includes('Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.'));
     assert.ok(html.includes("event.data.type === 'saveError'"));
     assert.ok(html.includes("event.data.type === 'palettesState'"));
@@ -544,7 +547,7 @@ suite('KRL syntax color configuration', () => {
 
 function completePalettes(color: string): { dark: Record<string, string>; light: Record<string, string> } {
   const keys = [
-    'normalText', 'comments', 'blockComments', 'strings', 'numbers', 'programFlow',
+    'normalText', 'comments', 'todoMarkers', 'foldStarts', 'foldEnds', 'blockComments', 'strings', 'numbers', 'programFlow',
     'controlStructures', 'ifKeyword', 'switchKeyword', 'doKeyword', 'waitKeyword',
     'variableNames', 'setupCommands', 'motionCommands', 'mathFunctions', 'ioCommands',
     'typeDefinitions', 'systemVariables', 'listFunctions'

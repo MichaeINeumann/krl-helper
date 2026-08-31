@@ -35,6 +35,9 @@ export interface TokenColorCustomizations {
 const colorDefinitions: readonly ColorDefinition[] = [
   { label: 'Regular text', key: 'normalText', scope: 'source.krl', darkFallback: '#C0C0C0', lightFallback: '#000000' },
   { label: 'Comments', key: 'comments', scope: 'comment.line.semicolon.krl', darkFallback: '#00FF00', lightFallback: '#59636D' },
+  { label: 'TODO markers', key: 'todoMarkers', scope: 'keyword.other.todo.krl', darkFallback: '#F8F8F2', lightFallback: '#795E26' },
+  { label: 'Fold starts', key: 'foldStarts', scope: 'keyword.other.fold.start.krl', darkFallback: '#66D9EF', lightFallback: '#005A9C' },
+  { label: 'Fold ends', key: 'foldEnds', scope: 'keyword.other.fold.end.krl', darkFallback: '#F92672', lightFallback: '#A31515' },
   { label: 'Alternative block comments', key: 'blockComments', scope: 'comment.block.alternative.krl', darkFallback: '#75715E', lightFallback: '#59636D' },
   { label: 'Strings', key: 'strings', scope: ['string.quoted.double.krl', 'string.quoted.single.krl'], darkFallback: '#FFFFFF', lightFallback: '#A31515' },
   { label: 'Numbers', key: 'numbers', scope: 'constant.numeric.krl', darkFallback: '#AE81FF', lightFallback: '#003C3C' },

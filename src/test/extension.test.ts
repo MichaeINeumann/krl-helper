@@ -33,6 +33,30 @@ suite('KRL Helper', () => {
     assert.strictEqual(configuration.comments?.lineComment, ';');
   });
 
+  test('declares nested semicolon comment marker scopes', async () => {
+    const extension = vscode.extensions.getExtension('MichaeINeumann.krl-helper');
+    assert.ok(extension);
+    const contents = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(
+      extension.extensionUri,
+      'syntaxes',
+      'krl.tmLanguage.json'
+    ));
+    const grammar = JSON.parse(Buffer.from(contents).toString('utf8')) as {
+      repository?: { comments?: { patterns?: Array<{ name?: string; patterns?: Array<{ name?: string }> }> } };
+    };
+    const commentPatterns = grammar.repository?.comments?.patterns ?? [];
+    const markerScopes = commentPatterns.flatMap(pattern =>
+      pattern.patterns?.map(nested => nested.name) ?? []
+    );
+
+    assert.ok(markerScopes.includes('keyword.other.todo.krl'));
+    assert.ok(markerScopes.includes('keyword.other.fold.start.krl'));
+    assert.ok(markerScopes.includes('keyword.other.fold.end.krl'));
+    assert.ok(commentPatterns.slice(0, 2).every(pattern => pattern.name === 'comment.line.semicolon.krl'));
+    assert.ok(commentPatterns[0].patterns?.some(pattern => pattern.name === 'keyword.other.todo.krl'));
+    assert.ok(commentPatterns[1].patterns?.some(pattern => pattern.name === 'keyword.other.todo.krl'));
+  });
+
   test('dedicated KRL shortcut command toggles selected lines', async () => {
     const document = await vscode.workspace.openTextDocument({
       language: 'krl',
